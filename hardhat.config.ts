@@ -1,10 +1,9 @@
 import { HardhatUserConfig, vars } from "hardhat/config";
 import "@parity/hardhat-polkadot";
-// import "@nomicfoundation/hardhat-ignition-ethers";
+import "@nomicfoundation/hardhat-ignition-ethers";
 import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@typechain/hardhat";
-// import "@nomicfoundation/hardhat-toolbox"; // avoiding for now due to compatibility warning
 
 // Retrieve the private key from Hardhat configuration variables
 // Run 'npx hardhat vars set PRIVATE_KEY' to set it.
@@ -13,7 +12,7 @@ const PRIVATE_KEY = vars.has("PRIVATE_KEY") ? vars.get("PRIVATE_KEY") : "0x00000
 
 const config: HardhatUserConfig = {
   solidity: {
-    version: "0.8.20",
+    version: "0.8.28",
     settings: {
       optimizer: {
         enabled: true,
@@ -38,9 +37,6 @@ const config: HardhatUserConfig = {
         accounts: [PRIVATE_KEY],
     }
   },
-  // polkadot: {
-  //   compiler: "@parity/resolc", // if needed to specific
-  // }
 };
 
 export default config;

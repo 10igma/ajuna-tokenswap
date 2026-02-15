@@ -1,6 +1,10 @@
 #!/bin/bash
 
 # Start a simple HTTP server for the UIs
+# Serves from the frontend/ directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
 echo "Starting UI server on port 8000..."
 echo ""
 echo "  User-facing swap dApp:  http://localhost:8000/app.html"
@@ -12,4 +16,4 @@ echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-python3 -m http.server 8000
+cd "$PROJECT_DIR/frontend" && python3 -m http.server 8000

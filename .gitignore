@@ -1,1 +1,32 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Hardhat build artifacts
+artifacts/
+cache/
+typechain-types/
+
+# Generated chain specs
+chain-specs/
+
+# Ignition deployment artifacts
+ignition/deployments/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+coverage.json
+
+# polkadot-sdk (external, built locally)
+polkadot-sdk/

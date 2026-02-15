@@ -1,44 +1,60 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title AjunaERC20
  * @notice Wrapped representation of the AJUN Foreign Asset as an ERC20 token on Polkadot AssetHub.
- * @dev Uses OpenZeppelin AccessControl for role-gated minting and burning.
+ * @dev UUPS-upgradeable. Uses OpenZeppelin AccessControl for role-gated minting and burning.
  *      Only accounts with MINTER_ROLE (intended: the AjunaWrapper treasury) can mint or burn.
  *      Burning requires prior ERC20 approval from the token holder (standard burnFrom pattern).
+ *      Upgrades are restricted to accounts with UPGRADER_ROLE.
  */
-contract AjunaERC20 is ERC20, AccessControl {
+contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlUpgradeable, UUPSUpgradeable {
     /// @notice Role identifier for accounts permitted to mint and burn tokens.
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    /// @dev Token decimals, set once at construction to match the native AJUN asset.
-    uint8 private immutable _decimals;
+    /// @notice Role identifier for accounts permitted to authorize contract upgrades.
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+
+    /// @dev Token decimals, set once during initialization to match the native AJUN asset.
+    uint8 private _tokenDecimals;
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /**
-     * @notice Deploys the wrapped AJUN ERC20 token.
-     * @param name_   Token name (e.g. "Wrapped Ajuna").
-     * @param symbol_ Token symbol (e.g. "WAJUN").
-     * @param admin   Address that receives DEFAULT_ADMIN_ROLE (can later grant MINTER_ROLE).
+     * @notice Initializes the wrapped AJUN ERC20 token (called once via proxy).
+     * @param name_     Token name (e.g. "Wrapped Ajuna").
+     * @param symbol_   Token symbol (e.g. "WAJUN").
+     * @param admin     Address that receives DEFAULT_ADMIN_ROLE and UPGRADER_ROLE.
      * @param decimals_ Number of decimals — must match the native AJUN asset (typically 12).
      */
-    constructor(
+    function initialize(
         string memory name_,
         string memory symbol_,
         address admin,
         uint8 decimals_
-    ) ERC20(name_, symbol_) {
+    ) public initializer {
         require(admin != address(0), "AjunaERC20: admin is zero address");
+        require(decimals_ <= 18, "AjunaERC20: decimals exceed 18");
+        __ERC20_init(name_, symbol_);
+        __AccessControl_init();
+        __UUPSUpgradeable_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _decimals = decimals_;
+        _grantRole(UPGRADER_ROLE, admin);
+        _tokenDecimals = decimals_;
     }
 
     /// @notice Returns the number of decimals used for display purposes.
     function decimals() public view override returns (uint8) {
-        return _decimals;
+        return _tokenDecimals;
     }
 
     /**
@@ -63,4 +79,16 @@ contract AjunaERC20 is ERC20, AccessControl {
         _spendAllowance(from, _msgSender(), amount);
         _burn(from, amount);
     }
+
+    /**
+     * @dev Restricts contract upgrades to accounts with UPGRADER_ROLE.
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {
+        require(newImplementation.code.length > 0, "AjunaERC20: implementation not a contract");
+    }
+
+    /**
+     * @dev Reserved storage gap for future base contract upgrades.
+     */
+    uint256[49] private __gap;
 }

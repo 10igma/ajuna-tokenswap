@@ -1,4 +1,5 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
+import { ethers } from "ethers";
 
 const AjunaWrapperModule = buildModule("AjunaWrapperModule", (m) => {
   // Foreign Asset Precompile Address — must be set correctly for each target network.
@@ -13,28 +14,70 @@ const AjunaWrapperModule = buildModule("AjunaWrapperModule", (m) => {
 
   const adminAddress = m.getAccount(0); // Deployer is initial admin
 
-  // 1. Deploy AjunaERC20 (with configurable decimals)
-  const token = m.contract("AjunaERC20", [
+  // ──────────────────────────────────────────────
+  //  1. Deploy AjunaERC20 (UUPS proxy)
+  // ──────────────────────────────────────────────
+
+  // 1a. Deploy implementation
+  const tokenImpl = m.contract("AjunaERC20", [], { id: "AjunaERC20Impl" });
+
+  // 1b. Encode initialize() calldata
+  const tokenInitData = new ethers.Interface([
+    "function initialize(string,string,address,uint8)",
+  ]).encodeFunctionData("initialize", [
     "Wrapped Ajuna",
     "WAJUN",
     adminAddress,
     tokenDecimals,
   ]);
 
-  // 2. Deploy AjunaWrapper (treasury)
-  const wrapper = m.contract("AjunaWrapper", [token, foreignAssetAddress]);
+  // 1c. Deploy proxy
+  const tokenProxy = m.contract(
+    "ERC1967Proxy",
+    [tokenImpl, tokenInitData],
+    { id: "AjunaERC20Proxy" }
+  );
 
-  // 3. Grant MINTER_ROLE to Wrapper so it can mint and burnFrom
+  // ──────────────────────────────────────────────
+  //  2. Deploy AjunaWrapper (UUPS proxy)
+  // ──────────────────────────────────────────────
+
+  // 2a. Deploy implementation
+  const wrapperImpl = m.contract("AjunaWrapper", [], { id: "AjunaWrapperImpl" });
+
+  // 2b. Encode initialize() calldata
+  const wrapperInitData = new ethers.Interface([
+    "function initialize(address,address)",
+  ]).encodeFunctionData("initialize", [
+    tokenProxy,      // Will resolve to the proxy address
+    foreignAssetAddress,
+  ]);
+
+  // 2c. Deploy proxy
+  const wrapperProxy = m.contract(
+    "ERC1967Proxy",
+    [wrapperImpl, wrapperInitData],
+    { id: "AjunaWrapperProxy" }
+  );
+
+  // ──────────────────────────────────────────────
+  //  3. Grant MINTER_ROLE to Wrapper proxy
+  // ──────────────────────────────────────────────
+
   // MINTER_ROLE = keccak256("MINTER_ROLE")
   const MINTER_ROLE =
     "0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6";
-  m.call(token, "grantRole", [MINTER_ROLE, wrapper]);
+
+  // Call grantRole on the proxy (which delegates to the implementation)
+  m.call(tokenProxy, "grantRole", [MINTER_ROLE, wrapperProxy], {
+    id: "grantMinterRole",
+  });
 
   // NOTE: After deployment, manually:
-  //   1. Transfer DEFAULT_ADMIN_ROLE to a multisig, then renounce from deployer.
-  //   2. Send 1–2 DOT to the wrapper address as Existential Deposit to prevent account reaping.
+  //   1. Transfer DEFAULT_ADMIN_ROLE and ownership to a multisig, then renounce from deployer.
+  //   2. Send 1–2 DOT to the wrapper proxy address as Existential Deposit.
 
-  return { token, wrapper };
+  return { tokenImpl, tokenProxy, wrapperImpl, wrapperProxy };
 });
 
 export default AjunaWrapperModule;

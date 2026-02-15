@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./AjunaERC20.sol";
 import "./interfaces/IERC20Precompile.sol";
 
 /**
  * @title AjunaWrapper
  * @notice Treasury contract that wraps AJUN Foreign Assets into ERC20 wAJUN tokens and vice-versa.
- * @dev Implements the Mint-and-Lock pattern:
+ * @dev UUPS-upgradeable. Implements the Mint-and-Lock pattern:
  *      - deposit(): user locks Foreign AJUN → treasury mints wAJUN
  *      - withdraw(): user burns wAJUN (via approval) → treasury releases Foreign AJUN
  *
@@ -21,36 +24,46 @@ import "./interfaces/IERC20Precompile.sol";
  *      - ReentrancyGuard on all state-changing user functions
  *      - Pausable circuit breaker (owner-only)
  *      - Rescue function for accidentally sent tokens (cannot rescue the locked foreign asset)
- *      - Mutable foreignAsset address to handle pallet-revive precompile address changes
+ *      - foreignAsset address set once in initialize(); change via UUPS upgrade if needed
+ *      - UUPS upgradeability for bug-fix deployments (owner-only)
  */
-contract AjunaWrapper is Ownable, ReentrancyGuard, Pausable {
-    /// @notice The wrapped ERC20 token (wAJUN) managed by this treasury.
-    AjunaERC20 public immutable token;
+contract AjunaWrapper is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable, UUPSUpgradeable {
+    using SafeERC20 for IERC20;
 
-    /// @notice The Foreign Asset precompile (AJUN). Mutable to allow governance updates if the
-    ///         precompile address changes due to a runtime upgrade.
+    /// @notice The wrapped ERC20 token (wAJUN) managed by this treasury.
+    AjunaERC20 public token;
+
+    /// @notice The Foreign Asset precompile (AJUN). Set once during initialization;
+    ///         change via UUPS upgrade if the precompile address ever changes.
     IERC20Precompile public foreignAsset;
 
     /// @notice Emitted when a user wraps Foreign AJUN into wAJUN.
     event Deposited(address indexed user, uint256 amount);
     /// @notice Emitted when a user unwraps wAJUN back into Foreign AJUN.
     event Withdrawn(address indexed user, uint256 amount);
-    /// @notice Emitted when the owner updates the Foreign Asset precompile address.
-    event ForeignAssetUpdated(address indexed oldAddress, address indexed newAddress);
     /// @notice Emitted when the owner rescues accidentally sent tokens.
     event TokenRescued(address indexed tokenAddress, address indexed to, uint256 amount);
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     /**
-     * @notice Deploys the wrapper treasury.
-     * @param _token                  Address of the deployed AjunaERC20 contract.
+     * @notice Initializes the wrapper treasury (called once via proxy).
+     * @param _token                  Address of the deployed AjunaERC20 proxy.
      * @param _foreignAssetPrecompile Address of the Foreign Asset precompile on AssetHub.
      */
-    constructor(
+    function initialize(
         address _token,
         address _foreignAssetPrecompile
-    ) Ownable(msg.sender) {
+    ) public initializer {
         require(_token != address(0), "AjunaWrapper: token is zero address");
         require(_foreignAssetPrecompile != address(0), "AjunaWrapper: precompile is zero address");
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        __Pausable_init();
+        __UUPSUpgradeable_init();
         token = AjunaERC20(_token);
         foreignAsset = IERC20Precompile(_foreignAssetPrecompile);
     }
@@ -121,23 +134,6 @@ contract AjunaWrapper is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ──────────────────────────────────────────────
-    //  Admin: Foreign Asset Address Update
-    // ──────────────────────────────────────────────
-
-    /**
-     * @notice Updates the Foreign Asset precompile address.
-     * @dev Use this if the precompile address changes due to a pallet-revive runtime upgrade.
-     *      Should be restricted to a multisig or governance timelock in production.
-     * @param _newForeignAsset The new precompile address.
-     */
-    function updateForeignAsset(address _newForeignAsset) external onlyOwner {
-        require(_newForeignAsset != address(0), "AjunaWrapper: new address is zero");
-        address oldAddress = address(foreignAsset);
-        foreignAsset = IERC20Precompile(_newForeignAsset);
-        emit ForeignAssetUpdated(oldAddress, _newForeignAsset);
-    }
-
-    // ──────────────────────────────────────────────
     //  Admin: Rescue Accidentally Sent Tokens
     // ──────────────────────────────────────────────
 
@@ -150,8 +146,25 @@ contract AjunaWrapper is Ownable, ReentrancyGuard, Pausable {
      */
     function rescueToken(address tokenAddress, address to, uint256 amount) external onlyOwner {
         require(tokenAddress != address(foreignAsset), "Cannot rescue locked foreign asset");
+        require(tokenAddress != address(token), "Cannot rescue wAJUN token");
         require(to != address(0), "AjunaWrapper: rescue to zero address");
-        IERC20(tokenAddress).transfer(to, amount);
+        IERC20(tokenAddress).safeTransfer(to, amount);
         emit TokenRescued(tokenAddress, to, amount);
     }
+
+    // ──────────────────────────────────────────────
+    //  Upgrade Authorization
+    // ──────────────────────────────────────────────
+
+    /**
+     * @dev Restricts contract upgrades to the owner.
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {
+        require(newImplementation.code.length > 0, "AjunaWrapper: implementation not a contract");
+    }
+
+    /**
+     * @dev Reserved storage gap for future base contract upgrades.
+     */
+    uint256[48] private __gap;
 }

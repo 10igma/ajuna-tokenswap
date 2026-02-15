@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ajuna Tokenswap - Test UI</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <style>
+      :root {
+        --color-bg: #09090b;
+        --color-surface: #18181b;
+        --color-border: #27272a;
+        --color-accent: #6290AF;
+        --color-text: #f4f4f5;
+        --color-text-muted: #71717a;
+        --color-text-secondary: #a1a1aa;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--color-bg);
+        min-height: 100vh;
+        padding: 20px;
+        color: var(--color-text);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: var(--color-surface); }
+      ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 9999px; }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      .header {
+        position: relative;
+        border-radius: 12px;
+        border: 1px solid var(--color-border);
+        background: var(--color-surface);
+        padding: 24px 30px;
+        margin-bottom: 16px;
+        overflow: hidden;
+      }
+      .header::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(98,144,175,0.10) 0%, transparent 100%);
+        pointer-events: none;
+      }
+
+      .header-content {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .header-logo {
+        width: 48px;
+        height: 48px;
+        flex-shrink: 0;
+      }
+
+      h1 {
+        font-size: 1.8em;
+        font-weight: 800;
+        color: var(--color-accent);
+        margin-bottom: 4px;
+      }
+
+      .subtitle {
+        color: var(--color-text-muted);
+        font-size: 0.95em;
+      }
+
+      .status-bar {
+        border-radius: 12px;
+        border: 1px solid var(--color-border);
+        background: rgba(24,24,27,0.5);
+        padding: 16px 20px;
+        margin-bottom: 16px;
+      }
+
+      .status-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(39,39,42,0.5);
+      }
+
+      .status-item:last-child {
+        border-bottom: none;
+      }
+
+      .status-label {
+        font-weight: 600;
+        font-size: 0.85em;
+        color: var(--color-text-secondary);
+      }
+
+      .status-value {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        color: var(--color-accent);
+        font-size: 0.85em;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .card {
+        border-radius: 12px;
+        border: 1px solid var(--color-border);
+        background: rgba(24,24,27,0.5);
+        padding: 20px;
+        transition: border-color 0.2s ease;
+      }
+
+      .card:hover {
+        border-color: rgba(98,144,175,0.3);
+      }
+
+      .card-title {
+        font-size: 1.1em;
+        font-weight: 700;
+        margin-bottom: 16px;
+        color: var(--color-text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 0.85em;
+      }
+
+      .balance-display {
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        padding: 16px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        text-align: center;
+      }
+
+      .balance-label {
+        font-size: 0.75em;
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 6px;
+      }
+
+      .balance-value {
+        font-size: 1.6em;
+        font-weight: 700;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .balance-foreign .balance-value { color: var(--color-accent); }
+      .balance-erc20 .balance-value { color: #a78bfa; }
+      .balance-treasury .balance-value { color: #4ade80; }
+
+      .input-group {
+        margin-bottom: 12px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+        font-size: 0.8em;
+        color: var(--color-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      input {
+        width: 100%;
+        padding: 10px 14px;
+        border: 1px solid var(--color-border);
+        border-radius: 8px;
+        font-size: 0.9em;
+        background: rgba(24,24,27,0.8);
+        color: var(--color-text);
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        transition: border-color 0.2s ease;
+      }
+
+      input::placeholder {
+        color: #3f3f46;
+      }
+
+      input:focus {
+        outline: none;
+        border-color: rgba(98,144,175,0.5);
+        box-shadow: 0 0 0 2px rgba(98,144,175,0.15);
+      }
+
+      button {
+        width: 100%;
+        padding: 12px 16px;
+        background: var(--color-accent);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.9em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.2s ease, transform 0.15s ease;
+        margin-top: 8px;
+      }
+
+      button:hover:not(:disabled) {
+        opacity: 0.9;
+        transform: translateY(-1px);
+      }
+
+      button:active:not(:disabled) {
+        transform: translateY(0);
+      }
+
+      button:disabled {
+        background: #27272a;
+        color: #52525b;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .btn-secondary {
+        background: #52525b;
+      }
+
+      .btn-success {
+        background: #15803d;
+      }
+
+      .log-container {
+        border-radius: 12px;
+        border: 1px solid var(--color-border);
+        background: rgba(24,24,27,0.5);
+        padding: 20px;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .log-entry {
+        padding: 8px 12px;
+        margin-bottom: 6px;
+        border-radius: 6px;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.8em;
+        animation: slideIn 0.3s ease;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateX(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      .log-info {
+        background: rgba(59,130,246,0.08);
+        border-left: 3px solid #3b82f6;
+        color: #93c5fd;
+      }
+
+      .log-success {
+        background: rgba(34,197,94,0.08);
+        border-left: 3px solid #22c55e;
+        color: #86efac;
+      }
+
+      .log-error {
+        background: rgba(239,68,68,0.08);
+        border-left: 3px solid #ef4444;
+        color: #fca5a5;
+      }
+
+      .log-warning {
+        background: rgba(234,179,8,0.08);
+        border-left: 3px solid #eab308;
+        color: #fde68a;
+      }
+
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        border-top-color: var(--color-accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-left: 10px;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .address-display {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.85em;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div class="header-content">
+          <svg class="header-logo" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="32" cy="32" r="30" fill="#262324"/>
+            <g transform="translate(-6.9,-15.6) scale(0.19)">
+              <defs>
+                <linearGradient id="g1" x1="152.27" y1="234.83" x2="190.97" y2="178.63" gradientUnits="userSpaceOnUse"><stop offset="0.15" stop-color="#146BB5"/><stop offset="0.27" stop-color="#1566AE"/><stop offset="0.43" stop-color="#155CA0"/><stop offset="0.63" stop-color="#144C8B"/><stop offset="0.85" stop-color="#0E356F"/><stop offset="1" stop-color="#06235B"/></linearGradient>
+                <linearGradient id="g2" x1="251.06" y1="179.42" x2="189.85" y2="211.96" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7EC8EF"/><stop offset="1" stop-color="#405EAB"/></linearGradient>
+                <linearGradient id="g3" x1="152.27" y1="355.69" x2="190.97" y2="299.49" gradientUnits="userSpaceOnUse" gradientTransform="matrix(1 0 0 -1 0 621.943)"><stop offset="0.15" stop-color="#152E52"/><stop offset="0.39" stop-color="#142C4F"/><stop offset="0.73" stop-color="#122645"/><stop offset="1" stop-color="#0F1F3B"/></linearGradient>
+                <linearGradient id="g4" x1="251.06" y1="300.29" x2="189.85" y2="332.82" gradientUnits="userSpaceOnUse" gradientTransform="matrix(1 0 0 -1 0 621.943)"><stop offset="0" stop-color="#1B4F76"/><stop offset="1" stop-color="#142553"/></linearGradient>
+              </defs>
+              <path fill="url(#g1)" d="M165.693,156.978c-16.307,18.829-27.458,49.133-29.223,83.884h52.468c1.753-24.756,9.896-41.827,15.767-49.054C191.258,171.034,173.659,160.941,165.693,156.978z"/>
+              <path fill="url(#g2)" d="M220.47,240.862h52.468c-2.964-58.339-32.371-104.161-68.234-104.161c-14.5,0-27.943,7.496-39.011,20.276c7.939,3.949,25.555,14.041,39.011,34.831C217.908,212.209,220.047,232.001,220.47,240.862z"/>
+              <path fill="url(#g3)" d="M165.693,344.101c-16.307-18.829-27.458-49.133-29.223-83.884h52.468c1.753,24.756,9.896,41.827,15.767,49.054C191.258,330.045,173.659,340.138,165.693,344.101z"/>
+              <path fill="url(#g4)" d="M220.47,260.217h52.468c-2.964,58.339-32.371,104.161-68.234,104.161c-14.5,0-27.943-7.496-39.011-20.276c7.939-3.949,25.555-14.041,39.011-34.831C217.909,288.87,220.047,269.078,220.47,260.217z"/>
+            </g>
+          </svg>
+          <div>
+            <h1>Ajuna Tokenswap</h1>
+            <p class="subtitle">Developer testing interface &mdash; local PVM node</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div class="status-item">
+          <span class="status-label">Network:</span>
+          <span class="status-value" id="network">Connecting...</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Your Address:</span>
+          <span class="status-value address-display" id="address">-</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Native Balance:</span>
+          <span class="status-value" id="nativeBalance">0 DEV</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2 class="card-title">Setup</h2>
+          <button onclick="fundAccount()" class="btn-success">
+            Fund Test Account (100 DEV)
+          </button>
+          <button onclick="mintForeignAsset()" class="btn-success">
+            Mint Foreign Asset (1000 AJUN)
+          </button>
+          <button onclick="deployContracts()" class="btn-secondary">
+            Deploy Contracts
+          </button>
+          <div class="input-group" style="margin-top: 20px">
+            <label>Wrapper Address:</label>
+            <input type="text" id="wrapperAddress" placeholder="0x..." />
+          </div>
+          <div class="input-group">
+            <label>ERC20 (wAJUN) Address:</label>
+            <input type="text" id="erc20Address" placeholder="0x..." />
+          </div>
+          <div class="input-group">
+            <label>Foreign Asset Address:</label>
+            <input type="text" id="foreignAssetAddress" placeholder="0x... (precompile or mock)" value="0x0000000000000000000000000000000000000400" />
+          </div>
+          <button onclick="loadContracts()">Load Contracts</button>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Balances</h2>
+          <div class="balance-display balance-foreign">
+            <div class="balance-label">Foreign Asset Balance</div>
+            <div class="balance-value" id="foreignBalance">0</div>
+          </div>
+          <div class="balance-display balance-erc20">
+            <div class="balance-label">Wrapped ERC20 Balance</div>
+            <div class="balance-value" id="erc20Balance">0</div>
+          </div>
+          <div class="balance-display balance-treasury">
+            <div class="balance-label">Treasury Locked (Invariant)</div>
+            <div class="balance-value" id="treasuryBalance">0</div>
+          </div>
+          <button onclick="refreshBalances()">Refresh Balances</button>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Wrap (Deposit)</h2>
+          <div class="input-group">
+            <label>Amount to Wrap:</label>
+            <input
+              type="number"
+              id="wrapAmount"
+              placeholder="100"
+              value="100"
+            />
+          </div>
+          <button onclick="approveWrap()">1. Approve Foreign Asset</button>
+          <button onclick="wrap()">2. Wrap (Lock & Mint)</button>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Unwrap (Withdraw)</h2>
+          <div class="input-group">
+            <label>Amount to Unwrap:</label>
+            <input
+              type="number"
+              id="unwrapAmount"
+              placeholder="50"
+              value="50"
+            />
+          </div>
+          <button onclick="approveUnwrap()">1. Approve ERC20</button>
+          <button onclick="unwrap()">2. Unwrap (Burn & Withdraw)</button>
+        </div>
+      </div>
+
+      <div class="log-container">
+        <h2 class="card-title">Activity Log</h2>
+        <div id="logs"></div>
+      </div>
+    </div>
+
+    <script>
+      // Configuration
+      const RPC_URL = "http://127.0.0.1:8545";
+      const CHAIN_ID = 420420420;
+      const TOKEN_DECIMALS = 12; // AJUN uses 12 decimals
+      const TEST_ACCOUNT_KEY =
+        "0x99b3c12287537e38c90a9219d4cb074a89a16e9cdb20bf85728ebd97c343e342";
+      // Alith — the pre-funded EVM dev account on revive-dev-node
+      const ALICE_KEY =
+        "0x5fb92d6e98884f76de468fa3f6278f8807c48bebc13595d45af5bdc4da702133";
+      // Foreign asset address — overridden from the UI input field
+      let FOREIGN_ASSET_ADDRESS =
+        "0x0000000000000000000000000000000000000400";
+
+      // Global state
+      let provider, signer, address;
+      let wrapperContract, erc20Contract, foreignAssetContract;
+
+      // Contract ABIs
+      const ERC20_ABI = [
+        "function balanceOf(address) view returns (uint256)",
+        "function approve(address spender, uint256 amount) returns (bool)",
+        "function allowance(address owner, address spender) view returns (uint256)",
+        "event Transfer(address indexed from, address indexed to, uint256 value)",
+        "event Approval(address indexed owner, address indexed spender, uint256 value)",
+      ];
+
+      const WRAPPER_ABI = [
+        "function deposit(uint256 amount)",
+        "function withdraw(uint256 amount)",
+        "function token() view returns (address)",
+        "function foreignAsset() view returns (address)",
+        "event Deposited(address indexed user, uint256 amount)",
+        "event Withdrawn(address indexed user, uint256 amount)",
+      ];
+
+      // Initialize
+      async function init() {
+        try {
+          provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+          signer = new ethers.Wallet(TEST_ACCOUNT_KEY, provider);
+          address = signer.address;
+
+          document.getElementById("address").textContent = address;
+
+          const network = await provider.getNetwork();
+          document.getElementById(
+            "network",
+          ).textContent = `Local (Chain ID: ${network.chainId})`;
+
+          await updateNativeBalance();
+          log("Connected to local node", "success");
+        } catch (error) {
+          log(`Connection error: ${error.message}`, "error");
+        }
+      }
+
+      // Logging
+      function log(message, type = "info") {
+        const logsDiv = document.getElementById("logs");
+        const entry = document.createElement("div");
+        entry.className = `log-entry log-${type}`;
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        logsDiv.insertBefore(entry, logsDiv.firstChild);
+      }
+
+      // Update native balance
+      async function updateNativeBalance() {
+        try {
+          const balance = await provider.getBalance(address);
+          document.getElementById(
+            "nativeBalance",
+          ).textContent = `${ethers.utils.formatEther(balance)} DEV`;
+        } catch (error) {
+          log(`Error fetching balance: ${error.message}`, "error");
+        }
+      }
+
+      // Fund account from Alith (pre-funded EVM dev account)
+      async function fundAccount() {
+        try {
+          log("Funding account from Alith...", "info");
+          const alice = new ethers.Wallet(ALICE_KEY, provider);
+
+          // Fetch nonce explicitly to avoid stale state
+          const nonce = await provider.getTransactionCount(alice.address, "latest");
+          const feeData = await provider.getFeeData();
+
+          const tx = await alice.sendTransaction({
+            to: address,
+            value: ethers.utils.parseEther("100"),
+            nonce: nonce,
+            maxFeePerGas: feeData.maxFeePerGas,
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || 0,
+            gasLimit: 1000000,
+            type: 2,
+          });
+
+          log(`Transaction sent: ${tx.hash}`, "info");
+          await tx.wait();
+          log("Account funded successfully! ✅", "success");
+          await updateNativeBalance();
+        } catch (error) {
+          log(`Funding failed: ${error.message}`, "error");
+        }
+      }
+
+      // Mint mock foreign asset tokens to test account (uses Alith as minter)
+      async function mintForeignAsset() {
+        try {
+          const foreignAddr = document.getElementById("foreignAssetAddress").value || FOREIGN_ASSET_ADDRESS;
+          if (!foreignAddr || foreignAddr === "0x0000000000000000000000000000000000000400") {
+            log("Enter a mock foreign asset address first (not the precompile)", "error");
+            return;
+          }
+
+          log("Minting 1000 AJUN to test account via Alith...", "info");
+          const alice = new ethers.Wallet(ALICE_KEY, provider);
+
+          const MINT_ABI = [
+            "function mint(address to, uint256 amount)",
+            "function hasRole(bytes32 role, address account) view returns (bool)",
+          ];
+          const mockFA = new ethers.Contract(foreignAddr, MINT_ABI, alice);
+
+          const amount = ethers.utils.parseUnits("1000", TOKEN_DECIMALS);
+          const tx = await mockFA.mint(address, amount, { gasLimit: 3000000 });
+          log(`Mint tx sent: ${tx.hash}`, "info");
+          await tx.wait();
+          log("Minted 1000 AJUN to test account! ✅", "success");
+
+          // Refresh balances if contracts are loaded
+          if (foreignAssetContract) {
+            await refreshBalances();
+          }
+        } catch (error) {
+          log(`Mint failed: ${error.message}`, "error");
+          log("Hint: Alith must have MINTER_ROLE on the mock foreign asset", "warning");
+        }
+      }
+
+      // Deploy contracts
+      async function deployContracts() {
+        try {
+          log("Deploying contracts...", "info");
+
+          // This would require the contract bytecode
+          // For now, show instructions
+          log(
+            "Please deploy using: npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local",
+            "warning",
+          );
+          log(
+            'Then paste the addresses above and click "Load Contracts"',
+            "info",
+          );
+        } catch (error) {
+          log(`Deployment error: ${error.message}`, "error");
+        }
+      }
+
+      // Load contracts
+      async function loadContracts() {
+        try {
+          const wrapperAddr = document.getElementById("wrapperAddress").value;
+          const erc20Addr = document.getElementById("erc20Address").value;
+
+          const foreignAddr = document.getElementById("foreignAssetAddress").value || FOREIGN_ASSET_ADDRESS;
+          FOREIGN_ASSET_ADDRESS = foreignAddr;
+
+          if (!wrapperAddr || !erc20Addr) {
+            log("Please enter both contract addresses", "error");
+            return;
+          }
+
+          wrapperContract = new ethers.Contract(
+            wrapperAddr,
+            WRAPPER_ABI,
+            signer,
+          );
+          erc20Contract = new ethers.Contract(erc20Addr, ERC20_ABI, signer);
+          foreignAssetContract = new ethers.Contract(
+            foreignAddr,
+            ERC20_ABI,
+            signer,
+          );
+
+          log("Contracts loaded successfully! ✅", "success");
+          await refreshBalances();
+        } catch (error) {
+          log(`Error loading contracts: ${error.message}`, "error");
+        }
+      }
+
+      // Refresh balances
+      async function refreshBalances() {
+        if (!foreignAssetContract || !erc20Contract) {
+          log("Please load contracts first", "warning");
+          return;
+        }
+
+        try {
+          const foreignBal = await foreignAssetContract.balanceOf(address);
+          const erc20Bal = await erc20Contract.balanceOf(address);
+
+          // Also fetch treasury locked balance for invariant display
+          let treasuryBal = 0;
+          try {
+            treasuryBal = await foreignAssetContract.balanceOf(
+              wrapperContract.address
+            );
+          } catch (_) {}
+
+          document.getElementById("foreignBalance").textContent =
+            ethers.utils.formatUnits(foreignBal, TOKEN_DECIMALS);
+          document.getElementById("erc20Balance").textContent =
+            ethers.utils.formatUnits(erc20Bal, TOKEN_DECIMALS);
+          document.getElementById("treasuryBalance").textContent =
+            ethers.utils.formatUnits(treasuryBal, TOKEN_DECIMALS);
+
+          log("Balances refreshed", "info");
+        } catch (error) {
+          log(`Error refreshing balances: ${error.message}`, "error");
+        }
+      }
+
+      // Approve wrap
+      async function approveWrap() {
+        if (!foreignAssetContract || !wrapperContract) {
+          log("Please load contracts first", "warning");
+          return;
+        }
+
+        try {
+          const amount = document.getElementById("wrapAmount").value;
+          const amountWei = ethers.utils.parseUnits(amount, TOKEN_DECIMALS);
+
+          log(`Approving ${amount} Foreign Assets...`, "info");
+          const tx = await foreignAssetContract.approve(
+            wrapperContract.address,
+            amountWei,
+          );
+          await tx.wait();
+          log("Approval successful! ✅", "success");
+        } catch (error) {
+          log(`Approval failed: ${error.message}`, "error");
+        }
+      }
+
+      // Wrap
+      async function wrap() {
+        if (!wrapperContract) {
+          log("Please load contracts first", "warning");
+          return;
+        }
+
+        try {
+          const amount = document.getElementById("wrapAmount").value;
+          const amountWei = ethers.utils.parseUnits(amount, TOKEN_DECIMALS);
+
+          log(`Wrapping ${amount} tokens (deposit)...`, "info");
+          const tx = await wrapperContract.deposit(amountWei);
+          await tx.wait();
+          log("Deposit successful! ✅", "success");
+          await refreshBalances();
+        } catch (error) {
+          log(`Wrap failed: ${error.message}`, "error");
+        }
+      }
+
+      // Approve unwrap
+      async function approveUnwrap() {
+        if (!erc20Contract || !wrapperContract) {
+          log("Please load contracts first", "warning");
+          return;
+        }
+
+        try {
+          const amount = document.getElementById("unwrapAmount").value;
+          const amountWei = ethers.utils.parseUnits(amount, TOKEN_DECIMALS);
+
+          log(`Approving ${amount} ERC20 tokens...`, "info");
+          const tx = await erc20Contract.approve(
+            wrapperContract.address,
+            amountWei,
+          );
+          await tx.wait();
+          log("Approval successful! ✅", "success");
+        } catch (error) {
+          log(`Approval failed: ${error.message}`, "error");
+        }
+      }
+
+      // Unwrap
+      async function unwrap() {
+        if (!wrapperContract) {
+          log("Please load contracts first", "warning");
+          return;
+        }
+
+        try {
+          const amount = document.getElementById("unwrapAmount").value;
+          const amountWei = ethers.utils.parseUnits(amount, TOKEN_DECIMALS);
+
+          log(`Unwrapping ${amount} tokens (withdraw)...`, "info");
+          const tx = await wrapperContract.withdraw(amountWei);
+          await tx.wait();
+          log("Withdraw successful! ✅", "success");
+          await refreshBalances();
+        } catch (error) {
+          log(`Unwrap failed: ${error.message}`, "error");
+        }
+      }
+
+      // Initialize on load
+      window.addEventListener("load", init);
+    </script>
+  </body>
+</html>

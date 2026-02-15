@@ -2,10 +2,10 @@
  * Deploy a mock Foreign Asset (ERC20) for local dev-node E2E testing.
  *
  * The local revive-dev-node does NOT include pallet-assets, so there is no
- * real ERC20 precompile.  This script deploys an AjunaERC20 instance that
- * acts as a stand-in for the foreign asset precompile.  It then mints a
- * configurable amount to the test account so that the full wrap/unwrap flow
- * can be exercised.
+ * real ERC20 precompile.  This script deploys an AjunaERC20 instance (behind
+ * a UUPS proxy) that acts as a stand-in for the foreign asset precompile.
+ * It then mints a configurable amount to the test account so that the full
+ * wrap/unwrap flow can be exercised.
  *
  * Usage:
  *   npx hardhat run scripts/deploy_mock_foreign_asset.ts --network local
@@ -22,20 +22,27 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   console.log("Deployer:", deployer.address);
 
-  // ── Deploy a mock "Foreign Asset" (plain AjunaERC20) ──────────────────
+  // ── Deploy a mock "Foreign Asset" (AjunaERC20 behind UUPS proxy) ──────
   const AjunaERC20 = await ethers.getContractFactory("AjunaERC20");
 
-  // The deployer gets DEFAULT_ADMIN_ROLE + we'll grant MINTER_ROLE to deployer
-  // so we can mint mock tokens.  In production the precompile handles this.
-  const mockFA = await AjunaERC20.deploy(
+  // 1. Deploy implementation
+  const impl = await AjunaERC20.deploy();
+  await impl.waitForDeployment();
+
+  // 2. Deploy ERC1967Proxy with initialize() calldata
+  const initData = AjunaERC20.interface.encodeFunctionData("initialize", [
     "Mock AJUN Foreign Asset",
     "AJUN",
     deployer.address, // admin
     12                // decimals — must match production AJUN
-  );
-  await mockFA.waitForDeployment();
+  ]);
+  const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+  const proxy = await ProxyFactory.deploy(await impl.getAddress(), initData);
+  await proxy.waitForDeployment();
+
+  const mockFA = AjunaERC20.attach(await proxy.getAddress());
   const mockFAAddress = await mockFA.getAddress();
-  console.log("Mock Foreign Asset deployed at:", mockFAAddress);
+  console.log("Mock Foreign Asset (proxy) deployed at:", mockFAAddress);
 
   // Grant MINTER_ROLE to deployer so we can mint freely
   const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));

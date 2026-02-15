@@ -10,6 +10,7 @@ This project implements a treasury-based token wrapper that:
 - Allows users to burn wAJUN (via standard ERC20 approval) to withdraw their locked Foreign Assets
 - Uses role-based access control (`MINTER_ROLE`) for secure mint/burn operations
 - Includes a pausable circuit breaker, token rescue, and upgradeable foreign asset address
+- **UUPS proxy upgradeability** — both contracts can be upgraded without migrating state
 
 ## Architecture
 
@@ -23,16 +24,21 @@ This project implements a treasury-based token wrapper that:
 │  AjunaWrapper   │────────────────────────→  │  AjunaERC20  │
 │   (Treasury)    │                           │   (wAJUN)    │
 │   Ownable       │                           │ AccessControl│
-│   Pausable      │                           └──────────────┘
-│   ReentrancyGuard│
+│   Pausable      │                           │ UUPS Proxy   │
+│   ReentrancyGuard│                          └──────────────┘
+│   UUPS Proxy    │
 └─────────────────┘
 ```
+
+Both contracts are deployed behind ERC1967 proxies (UUPS pattern), enabling
+logic upgrades while preserving all state (balances, roles, locked assets).
 
 ### Contracts
 
 - **`IERC20Precompile.sol`**: Interface for the Foreign Asset precompile (ERC20-compatible)
-- **`AjunaERC20.sol`**: Wrapped AJUN ERC20 token with configurable decimals and role-gated `mint()` / `burnFrom()`
-- **`AjunaWrapper.sol`**: Treasury contract — Pausable, with rescue, foreign asset address update, and reentrancy guard
+- **`AjunaERC20.sol`**: UUPS-upgradeable wrapped AJUN ERC20 token with configurable decimals and role-gated `mint()` / `burnFrom()`. Upgrades restricted to `UPGRADER_ROLE`.
+- **`AjunaWrapper.sol`**: UUPS-upgradeable treasury contract — Pausable, with rescue, foreign asset address update, and reentrancy guard. Upgrades restricted to `onlyOwner`.
+- **`Proxy.sol`**: Imports OpenZeppelin's `ERC1967Proxy` to make it available for deployment scripts.
 
 ## Prerequisites
 
@@ -52,12 +58,13 @@ npm install --legacy-peer-deps
 ```
 ajuna-tokenswap/
 ├── contracts/
-│   ├── AjunaERC20.sol           # ERC20 wrapper token (wAJUN)
-│   ├── AjunaWrapper.sol         # Treasury contract
+│   ├── AjunaERC20.sol           # ERC20 wrapper token (wAJUN) — UUPS upgradeable
+│   ├── AjunaWrapper.sol         # Treasury contract — UUPS upgradeable
+│   ├── Proxy.sol                # Imports ERC1967Proxy for deployment
 │   └── interfaces/
 │       └── IERC20Precompile.sol # Foreign Asset interface
 ├── test/
-│   └── wrapper.test.ts          # Comprehensive test suite (29 tests)
+│   └── wrapper.test.ts          # Comprehensive test suite (60 tests)
 ├── ignition/
 │   └── modules/
 │       └── AjunaWrapper.ts      # Deployment module
@@ -72,8 +79,9 @@ ajuna-tokenswap/
 │   └── serve_ui.sh              # Serve the UIs
 ├── deployments.config.ts        # Multi-environment configuration
 ├── chopsticks.yml               # Chopsticks fork config (AssetHub)
-├── app.html                     # User-facing swap dApp (MetaMask)
-├── test-ui.html                 # Developer testing interface
+├── frontend/
+│   ├── app.html                 # User-facing swap dApp (MetaMask)
+│   └── test-ui.html             # Developer testing interface
 ├── hardhat.config.ts            # Hardhat configuration
 └── README.md
 ```
@@ -104,9 +112,9 @@ Expected output:
     Deployment
       ✔ should set correct token and foreignAsset addresses
       ✔ should set correct decimals
-      ✔ should revert AjunaERC20 deployment with zero admin
-      ✔ should revert AjunaWrapper deployment with zero token address
-      ✔ should revert AjunaWrapper deployment with zero precompile address
+      ✔ should revert AjunaERC20 initialization with zero admin
+      ✔ should revert AjunaWrapper initialization with zero token address
+      ✔ should revert AjunaWrapper initialization with zero precompile address
     Deposit (Wrap)
       ✔ should wrap Foreign Assets and emit Deposited event
       ✔ should revert on zero amount
@@ -138,8 +146,17 @@ Expected output:
       ✔ should reject non-owner
     Multi-User
       ✔ should handle interleaved wrap/unwrap from two users
+    UUPS Upgradeability
+      ✔ should prevent re-initialization of AjunaERC20
+      ✔ should prevent re-initialization of AjunaWrapper
+      ✔ should prevent non-upgrader from upgrading AjunaERC20
+      ✔ should prevent non-owner from upgrading AjunaWrapper
+      ✔ should allow owner to upgrade AjunaERC20
+      ✔ should allow owner to upgrade AjunaWrapper
+      ✔ should preserve balances after AjunaWrapper upgrade
+      ✔ should prevent calling initialize on implementation directly
 
-  29 passing
+  60 passing
 ```
 
 ### Test Coverage
@@ -149,10 +166,13 @@ The suite covers:
 - **Deposit (Wrap)**: Happy path, zero amount, missing approval, backing invariant
 - **Withdraw (Unwrap)**: Happy path (with ERC20 approval), zero amount, insufficient balance, missing approval, backing invariant
 - **Access Control**: MINTER_ROLE enforcement, deployer has no mint rights
-- **Pausable**: Circuit breaker on/off for both deposit and withdraw
-- **Rescue**: Token rescue works; locked foreign asset cannot be rescued; owner-only
-- **Foreign Asset Update**: Mutable address with owner-only guard
+- **Pausable**: Circuit breaker on/off for both deposit and withdraw; double-pause/unpause edge cases
+- **Rescue**: Token rescue works; locked foreign asset cannot be rescued; wAJUN cannot be rescued; owner-only
 - **Multi-User**: Interleaved operations maintain 1:1 backing invariant
+- **UUPS Upgradeability**: Re-initialization blocked, unauthorized upgrade blocked, successful upgrade preserves state, implementation initializer disabled, EOA upgrade rejected
+- **Ownership Transfer**: Two-step transfer, renounce blocked
+- **Role Management**: Grant/revoke MINTER_ROLE, UPGRADER_ROLE
+- **Edge Cases**: Zero-amount operations, reentrancy protection, event emission validation
 
 ### Testing Strategy: Local → Testnet → Production
 
@@ -160,7 +180,7 @@ The project uses a layered testing approach because the local dev node and produ
 
 | Level | Environment | Foreign Asset | Precompile | Best For |
 |-------|-------------|--------------|------------|----------|
-| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 29 tests |
+| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 60 tests |
 | **2. PVM Integration** | Local `revive-dev-node` | Mock ERC20 | No | PVM bytecode compat, gas |
 | **3. Chopsticks Fork** | Forked AssetHub state | **Real** | **Yes** | Production-like testing |
 | **4. Testnet** | Polkadot Hub TestNet | **Real** (via XCM) | **Yes** | Full production path |
@@ -255,10 +275,10 @@ Before going to mainnet, verify:
 - [ ] **E2E passed on testnet** with real XCM-transferred AJUN
 - [ ] **Existential Deposit** sent to Wrapper contract (1–2 DOT)
 - [ ] **Admin roles** transferred to multisig and deployer role renounced
-- [ ] **`app.html` CONFIG** updated with final contract addresses
+- [ ] **`frontend/app.html` CONFIG** updated with final contract addresses
 - [ ] **dApp tested** via MetaMask on the target network
 
-### User-Facing Swap dApp (`app.html`)
+### User-Facing Swap dApp (`frontend/app.html`)
 
 A guided, wallet-connected dApp for end users to wrap and unwrap AJUN tokens.
 
@@ -282,7 +302,7 @@ A guided, wallet-connected dApp for end users to wrap and unwrap AJUN tokens.
    ```
    http://localhost:8000/app.html?wrapper=0x...&erc20=0x...&foreign=0x...
    ```
-   Or edit the `CONFIG` object at the top of the `<script>` section in `app.html`.
+   Or edit the `CONFIG` object at the top of the `<script>` section in `frontend/app.html`.
 
 4. **Connect your wallet** — click "Connect Wallet" and approve in MetaMask
 
@@ -314,7 +334,7 @@ To add the Polkadot AssetHub network to MetaMask:
 | Chain ID | `420420420` | `420420417` |
 | Currency Symbol | `DOT` | `DOT` |
 
-### Developer Testing UI (`test-ui.html`)
+### Developer Testing UI (`frontend/test-ui.html`)
 
 For interactive developer testing on a local node (uses hardcoded test accounts):
 
@@ -360,21 +380,28 @@ await wrapper.withdraw(amount);
 
 ## Security Features
 
+- **UUPS proxy upgradeability** — both contracts can be upgraded to fix bugs without migrating users or losing state
 - **Role-based access control** (OpenZeppelin `AccessControl`) — only the Wrapper can mint/burn
+- **UPGRADER_ROLE** on AjunaERC20 — only accounts with this role can authorize upgrades
+- **Owner-only upgrade** on AjunaWrapper — only the owner can authorize upgrades
 - **burnFrom pattern** — the Wrapper cannot burn user tokens without their explicit ERC20 approval
 - **Reentrancy protection** (`ReentrancyGuard`) on all state-changing user functions
 - **Pausable** circuit breaker — owner can freeze all operations in an emergency
 - **Token rescue** — owner can recover accidentally sent tokens (but not the locked foreign asset)
 - **Mutable foreign asset address** — owner can update the precompile address if it changes with a runtime upgrade
-- **Constructor validation** — rejects zero addresses
+- **Initializer validation** — rejects zero addresses, prevents re-initialization
+- **Implementation sealed** — `_disableInitializers()` in constructor prevents initializing the implementation directly
 
 ### Post-Deployment Checklist
 
 After deploying to a live network:
-1. Send 1–2 DOT to the Wrapper address as **Existential Deposit** to prevent account reaping
-2. Transfer `DEFAULT_ADMIN_ROLE` on AjunaERC20 to a **multisig/governance** address
-3. **Renounce** `DEFAULT_ADMIN_ROLE` from the deployer account
-4. Verify a small wrap/unwrap cycle end-to-end
+1. Send 1–2 DOT to the Wrapper **proxy** address as **Existential Deposit** to prevent account reaping
+2. Transfer `DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE` on AjunaERC20 to a **multisig/governance** address
+3. Transfer ownership of AjunaWrapper to a **multisig/governance** address
+4. **Renounce** `DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE` from the deployer account
+5. Renounce ownership of AjunaWrapper from the deployer
+6. Verify a small wrap/unwrap cycle end-to-end
+7. Record both proxy addresses and implementation addresses for future reference
 
 ## Compilation
 
