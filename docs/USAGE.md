@@ -29,7 +29,7 @@ The wrap/unwrap flow involves two separate ERC20 `approve` + contract call seque
 User AJUN Balance ──→ [approve] ──→ [deposit] ──→ User wAJUN Balance
                     Foreign Asset     Wrapper       AjunaERC20
 
-                       UNWRAP (Withdraw)  
+                       UNWRAP (Withdraw)
 User wAJUN Balance ──→ [approve] ──→ [withdraw] ──→ User AJUN Balance
                      AjunaERC20      Wrapper        Foreign Asset
 ```

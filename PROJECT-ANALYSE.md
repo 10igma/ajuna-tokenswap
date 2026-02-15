@@ -485,7 +485,7 @@ test/
 | 1 | **Expand `.gitignore`** — add `artifacts/`, `cache/`, `typechain-types/`, `chain-specs/` | ✅ DONE |
 | 2 | **Remove tracked generated files** — `git rm -r --cached artifacts/ cache/ typechain-types/ chain-specs/` | ✅ DONE |
 
-### 🟠 High Priority  
+### 🟠 High Priority
 
 | # | Action | Status |
 |---|--------|--------|
