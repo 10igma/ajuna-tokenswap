@@ -11,7 +11,14 @@
     "e2e": "./scripts/e2e_local.sh",
     "serve": "./scripts/serve_ui.sh"
   },
-  "keywords": ["polkadot", "erc20", "token-wrapper", "uups", "asset-hub", "pallet-revive"],
+  "keywords": [
+    "polkadot",
+    "erc20",
+    "token-wrapper",
+    "uups",
+    "asset-hub",
+    "pallet-revive"
+  ],
   "author": "Ajuna Network",
   "license": "MIT",
   "type": "commonjs",
@@ -23,6 +30,7 @@
     "@openzeppelin/hardhat-upgrades": "^3.9.1",
     "@parity/hardhat-polkadot": "^0.2.7",
     "@parity/resolc": "^0.2.0",
+    "@polkadot/api": "^16.5.4",
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",
     "@types/chai": "^5.2.3",

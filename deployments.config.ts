@@ -107,7 +107,7 @@ const configs: Record<string, EnvConfig> = {
    * CHOPSTICKS (forked AssetHub mainnet)
    *
    * Forks real AssetHub state including all registered foreign assets.
-   * Requires: npx @nickvdende/chopsticks --config=chopsticks.yml
+   * Requires: npx @acala-network/chopsticks --config=chopsticks.yml
    *
    * The AJUN foreign asset (if registered on mainnet) will be available at its
    * real precompile address.  Fund a test account using Chopsticks' `dev_setStorage`.

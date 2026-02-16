@@ -9,7 +9,7 @@
 # ║  deploying to mainnet.                                         ║
 # ║                                                                ║
 # ║  Install & run:                                                ║
-# ║    npx @nickvdende/chopsticks --config=chopsticks.yml          ║
+# ║    npx @acala-network/chopsticks --config=chopsticks.yml       ║
 # ║                                                                ║
 # ║  Then in a separate terminal, start the eth-rpc adapter:       ║
 # ║    ./polkadot-sdk/target/release/eth-rpc --dev                 ║

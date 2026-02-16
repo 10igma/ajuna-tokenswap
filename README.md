@@ -238,7 +238,7 @@ WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
 
 ```bash
 # 1. Start Chopsticks fork of AssetHub
-npx @nickvdende/chopsticks --config=chopsticks.yml
+npx @acala-network/chopsticks --config=chopsticks.yml
 
 # 2. Start the eth-rpc adapter (points to Chopsticks WS at port 8000)
 ./polkadot-sdk/target/release/eth-rpc --node-rpc-url ws://127.0.0.1:8000
