@@ -63,6 +63,6 @@ Comprehensive documentation for the Ajuna Token Swap system: a UUPS-upgradeable 
 | Target runtime | pallet-revive (RISC-V via resolc) |
 | Token decimals | 12 (matches native AJUN) |
 | Proxy pattern | UUPS (ERC1967Proxy) |
-| Unit tests | 75 (including 13 UUPS-specific, 4 ownership, 14 allowlist) |
+| Unit tests | 81 (including 13 UUPS-specific, 4 ownership, 14 allowlist, 4 invariant view, 2 SafeERC20 defense) |
 | Local chain ID | 420420420 |
 | Testnet chain ID | 420420417 |

@@ -149,13 +149,13 @@ contract AjunaWrapper is Initializable, Ownable2StepUpgradeable, ReentrancyGuard
     function deposit(uint256 amount) external nonReentrant whenNotPaused onlyAllowedUser {
         require(amount > 0, "Amount must be > 0");
 
-        // 1. Pull Foreign Assets from user into treasury
-        bool success = foreignAsset.transferFrom(
+        // 1. Pull Foreign Assets from user into treasury (SafeERC20: reverts on
+        //    missing-return-value tokens or tokens that return false silently).
+        IERC20(address(foreignAsset)).safeTransferFrom(
             msg.sender,
             address(this),
             amount
         );
-        require(success, "Foreign Asset transfer failed. Check allowance?");
 
         // 2. Mint equivalent wAJUN to user
         token.mint(msg.sender, amount);
@@ -180,11 +180,32 @@ contract AjunaWrapper is Initializable, Ownable2StepUpgradeable, ReentrancyGuard
         // 1. Burn user's wAJUN (requires prior ERC20 approval to this contract)
         token.burnFrom(msg.sender, amount);
 
-        // 2. Release Foreign Assets from treasury back to user
-        bool success = foreignAsset.transfer(msg.sender, amount);
-        require(success, "Foreign Asset return transfer failed");
+        // 2. Release Foreign Assets from treasury back to user (SafeERC20).
+        IERC20(address(foreignAsset)).safeTransfer(msg.sender, amount);
 
         emit Withdrawn(msg.sender, amount);
+    }
+
+    // ──────────────────────────────────────────────
+    //  Views
+    // ──────────────────────────────────────────────
+
+    /**
+     * @notice Returns whether the 1:1 backing invariant currently holds:
+     *         `wAJUN.totalSupply() == foreignAsset.balanceOf(this)`.
+     * @dev    Convenience helper for off-chain monitors and dashboards. The
+     *         invariant is the core safety property of the wrapper:
+     *           - `true`  => system is exactly backed.
+     *           - `false` => either under-backed (alert!) or over-collateralized
+     *                        because someone direct-transferred AJUN to the
+     *                        wrapper without depositing (safe; cannot be
+     *                        withdrawn by users, only the supply locked at
+     *                        deposit time can).
+     *         Monitors should treat `totalSupply > balanceOf` as the urgent
+     *         alarm, since that is the only path that puts user funds at risk.
+     */
+    function isInvariantHealthy() external view returns (bool) {
+        return token.totalSupply() == foreignAsset.balanceOf(address(this));
     }
 
     // ──────────────────────────────────────────────

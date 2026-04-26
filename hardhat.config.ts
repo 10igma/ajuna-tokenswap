@@ -4,10 +4,26 @@ import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@typechain/hardhat";
 
-// Retrieve the private key from Hardhat configuration variables
+// Retrieve the private key from Hardhat configuration variables.
 // Run 'npx hardhat vars set PRIVATE_KEY' to set it.
-// Default fallback for CI/Local prevents crash if not set, but won't work for real deploy.
-const PRIVATE_KEY = vars.has("PRIVATE_KEY") ? vars.get("PRIVATE_KEY") : "0x0000000000000000000000000000000000000000000000000000000000000000";
+//
+// Fail fast when a production-bound network is selected without a real key —
+// silent fallback to a zero key would otherwise produce confusing
+// "invalid signer" errors deep in the call stack.
+//
+// HARDHAT_NETWORK is set when hardhat is invoked with `--network <name>`.
+// `compile`, `test`, and the in-memory hardhat network do not set it, so
+// CI / local flows are unaffected.
+const SELECTED_NETWORK = process.env.HARDHAT_NETWORK;
+const PRODUCTION_NETWORKS = ["polkadotMainnet", "polkadotTestnet"];
+if (SELECTED_NETWORK && PRODUCTION_NETWORKS.includes(SELECTED_NETWORK) && !vars.has("PRIVATE_KEY")) {
+  throw new Error(
+    `PRIVATE_KEY must be set for network "${SELECTED_NETWORK}". Run: npx hardhat vars set PRIVATE_KEY`
+  );
+}
+const PRIVATE_KEY = vars.has("PRIVATE_KEY")
+  ? vars.get("PRIVATE_KEY")
+  : "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 const config: HardhatUserConfig = {
   solidity: {

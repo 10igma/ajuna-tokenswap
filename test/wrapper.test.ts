@@ -1095,4 +1095,111 @@ describe("AjunaWrapper System", function () {
         .withArgs(user2.address, true);
     });
   });
+
+  // ═══════════════════════════════════════════════════════════
+  //  SafeERC20 Defense (LOW-A)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("SafeERC20 Defense", function () {
+    it("should reject deposit when foreign asset returns false from transferFrom", async function () {
+      // Deploy a wrapper pointed at a misbehaving foreign asset
+      const Bad = await ethers.getContractFactory("BadERC20");
+      const bad = await Bad.deploy();
+      await bad.waitForDeployment();
+
+      const badWrapper = await deployWrapperProxy(
+        await token.getAddress(),
+        await bad.getAddress()
+      );
+      await token.grantRole(await token.MINTER_ROLE(), await badWrapper.getAddress());
+      await badWrapper.connect(owner).setAllowlistEnabled(false);
+
+      const amount = ethers.parseUnits("10", DECIMALS);
+      await bad.mintTo(user.address, amount);
+      // Approval doesn't matter; the malicious transferFrom returns false silently.
+
+      // SafeERC20 must reject the silent-false return. Without the LOW-A fix
+      // this would pass through (deposit would silently mint wAJUN with no
+      // backing — invariant broken).
+      await expect(badWrapper.connect(user).deposit(amount)).to.be.reverted;
+
+      // Confirm no wAJUN was minted (invariant still intact).
+      expect(await token.balanceOf(user.address)).to.equal(0);
+      expect(await token.totalSupply()).to.equal(0);
+    });
+
+    it("should reject withdraw when foreign asset returns false from transfer", async function () {
+      // Deploy a wrapper pointed at a malicious token that allows the ERC20
+      // burnFrom to succeed (we hand-mint the wAJUN without doing an actual
+      // deposit) and then refuses to release the foreign asset.
+      const Bad = await ethers.getContractFactory("BadERC20");
+      const bad = await Bad.deploy();
+      await bad.waitForDeployment();
+
+      const badWrapper = await deployWrapperProxy(
+        await token.getAddress(),
+        await bad.getAddress()
+      );
+      await token.grantRole(await token.MINTER_ROLE(), await badWrapper.getAddress());
+      await badWrapper.connect(owner).setAllowlistEnabled(false);
+
+      // Manually mint wAJUN to user so withdraw passes the balance check and
+      // the burnFrom step. We bypass the deposit path entirely so we can
+      // isolate the transfer failure on withdraw.
+      const amount = ethers.parseUnits("10", DECIMALS);
+      await token.grantRole(await token.MINTER_ROLE(), owner.address);
+      await token.connect(owner).mint(user.address, amount);
+      await token.connect(user).approve(await badWrapper.getAddress(), amount);
+
+      await expect(badWrapper.connect(user).withdraw(amount)).to.be.reverted;
+
+      // wAJUN was NOT burned because burnFrom + safeTransfer happens atomically
+      // and the safeTransfer revert rolls back the burn.
+      expect(await token.balanceOf(user.address)).to.equal(amount);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Invariant View (INFO-C)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("isInvariantHealthy", function () {
+    it("should return true on a fresh wrapper (0 == 0)", async function () {
+      expect(await wrapper.isInvariantHealthy()).to.be.true;
+    });
+
+    it("should remain true after a normal deposit", async function () {
+      const amount = ethers.parseUnits("100", DECIMALS);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+      expect(await wrapper.isInvariantHealthy()).to.be.true;
+    });
+
+    it("should remain true after a normal withdraw", async function () {
+      const amount = ethers.parseUnits("100", DECIMALS);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+
+      await token.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).withdraw(amount);
+
+      expect(await wrapper.isInvariantHealthy()).to.be.true;
+      expect(await token.totalSupply()).to.equal(0);
+    });
+
+    it("should return false (over-collateralized) after a direct AJUN transfer to the wrapper", async function () {
+      // A third party direct-transfers AJUN to the wrapper (no deposit).
+      // Treasury balance grows; totalSupply does NOT. The strict-equality
+      // check returns false; the system is over-collateralized, which is
+      // safe — but this is exactly the signal off-chain monitors need.
+      const dust = ethers.parseUnits("1", DECIMALS);
+      await foreignAssetMock.connect(user).transfer(await wrapper.getAddress(), dust);
+
+      expect(await wrapper.isInvariantHealthy()).to.be.false;
+      // Treasury > supply (over-collateralized, not under-collateralized)
+      expect(await foreignAssetMock.balanceOf(await wrapper.getAddress())).to.be.gt(
+        await token.totalSupply()
+      );
+    });
+  });
 });

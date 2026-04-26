@@ -35,10 +35,10 @@ This review focuses on areas under-covered previously: **ownership transfer sema
 | **Critical** | 0 | — |
 | **High** | 0 | — |
 | **Medium** | 1 new (✅ fixed) + 1 carry-over (accepted) | M-A: switched to `Ownable2StepUpgradeable`; M-3: governance asymmetry, accepted |
-| **Low** | 2 new (1 ✅ fixed, 1 open) + 1 carry-over (accepted) | L-B: ✅ `renounceOwnership` reverts; L-A: open (defense-in-depth on `transferFrom`/`transfer`); L-1: accepted |
-| **Informational** | 5 | Operational and forward-compat |
+| **Low** | 2 new (✅ both fixed) + 1 carry-over (accepted) | L-A: ✅ SafeERC20; L-B: ✅ `renounceOwnership` reverts; L-1: accepted |
+| **Informational** | 5 (2 ✅ fixed, 3 open / accepted) | INFO-A: ✅ fail-fast; INFO-C: ✅ `isInvariantHealthy`; INFO-B (timelock), D (ED dust), E (mocks scope) — operational |
 
-The contracts are production-ready in terms of contract logic. After applying the M-A and L-B fixes, the remaining concerns are operational and accepted: governance asymmetry (mitigated by multisig + timelock), redundant balance check (kept for UX), and approval front-running (mitigated at the dApp layer). The open low-severity item L-A is defense-in-depth and benign against the current AssetHub precompile.
+The contracts are production-ready in terms of contract logic. All actionable findings (M-A, L-A, L-B, INFO-A, INFO-C) have been fixed in code and verified by tests. The remaining concerns are operational and accepted: governance asymmetry (mitigated by multisig + timelock), redundant balance check (kept for UX), approval front-running (mitigated at the dApp layer), and INFO-B / D / E which are deployment-time runbook items rather than contract changes.
 
 ---
 
@@ -87,10 +87,11 @@ This is confirmed by:
 2. **Operational fix**: keep `OwnableUpgradeable`, but require multisig handoff to be performed via a script that (a) computes EIP-55 checksum, (b) performs a dry-run `eth_call` first, (c) optionally first transfers to an admin-controlled relay address that can re-transfer if a mistake is caught.
 3. **Doc fix at minimum**: update [docs/SECURITY.md:128-138](docs/SECURITY.md#L128-L138) to remove the `acceptOwnership()` step that does not exist.
 
-### LOW-A: `deposit` and `withdraw` interact with the foreign asset via raw `transferFrom`/`transfer`
+### LOW-A: `deposit` and `withdraw` interact with the foreign asset via raw `transferFrom`/`transfer` — ✅ **FIXED**
 
 **Severity**: Low (defense-in-depth)
-**Files**: [contracts/AjunaWrapper.sol:85-90](contracts/AjunaWrapper.sol#L85-L90), [contracts/AjunaWrapper.sol:116-117](contracts/AjunaWrapper.sol#L116-L117)
+**Files**: [../contracts/AjunaWrapper.sol](../contracts/AjunaWrapper.sol)
+**Status**: ✅ Fixed — both calls now go through `IERC20(address(foreignAsset)).safeTransferFrom(...)` and `safeTransfer(...)`. Verified by a [BadERC20](../contracts/mocks/BadERC20.sol) mock that returns `false` silently from `transfer` / `transferFrom`: `deposit` and `withdraw` both revert (without the fix, `deposit` would silently mint wAJUN with no backing, and `withdraw` would burn wAJUN without releasing AJUN).
 
 `rescueToken` correctly uses `SafeERC20.safeTransfer`. `deposit` and `withdraw` do not — they call `foreignAsset.transferFrom(...)` and `foreignAsset.transfer(...)` directly and check the returned `bool` with `require(success, ...)`.
 
@@ -216,31 +217,18 @@ The wrapper-owner row is the highest concentration of risk in the system. Multis
 
 ## 6. Operational / Deployment-Time Findings
 
-### INFO-A: Hardhat config silently falls back to a zero PRIVATE_KEY
+### INFO-A: Hardhat config silently falls back to a zero PRIVATE_KEY — ✅ **FIXED**
 
-**File**: [hardhat.config.ts:11](hardhat.config.ts#L11)
-
-```typescript
-const PRIVATE_KEY = vars.has("PRIVATE_KEY")
-  ? vars.get("PRIVATE_KEY")
-  : "0x0000000000000000000000000000000000000000000000000000000000000000";
-```
-
-If an operator forgets to set `PRIVATE_KEY` and selects `polkadotMainnet`, the deploy attempts to sign with the zero key. This will fail at signing time, but the failure mode is opaque ("invalid signer"). Recommend failing fast at config-load time when the selected network is `polkadotMainnet` or `polkadotTestnet`:
-
-```typescript
-if (!vars.has("PRIVATE_KEY") && process.env.HARDHAT_NETWORK?.startsWith("polkadot")) {
-  throw new Error("PRIVATE_KEY must be set for production/testnet networks. Run: npx hardhat vars set PRIVATE_KEY");
-}
-```
+**File**: [../hardhat.config.ts](../hardhat.config.ts)
+**Status**: ✅ Fixed — config now throws at load time when `HARDHAT_NETWORK` is one of `polkadotMainnet` / `polkadotTestnet` and no `PRIVATE_KEY` Hardhat var is set. Compile / test / in-memory-hardhat flows are unaffected because they don't set `HARDHAT_NETWORK`.
 
 ### INFO-B: No on-chain timelock on owner / UPGRADER_ROLE
 
 [docs/SECURITY.md:380](docs/SECURITY.md#L380) lists "Timelock contract deployed in front of multisig (recommended: 24–48h delay)" as a hardening item. As of this review the project does not provide a Timelock deployment script. For production, a `TimelockController` (OpenZeppelin) in front of the multisig is the standard pattern. Any UUPS upgrade — the most catastrophic privileged action in the system — should pass through the timelock so users have time to exit.
 
-### INFO-C: No real-time invariant monitor
+### INFO-C: No real-time invariant monitor — ✅ **FIXED**
 
-The invariant `totalSupply == balanceOf(wrapper)` is verified in the test suite but is not exposed as an on-chain view function. An off-chain monitor needs to make two RPC calls and compare. Adding an on-chain helper is cheap:
+**Status**: ✅ Fixed — `isInvariantHealthy()` added to `AjunaWrapper` as an `external view` returning whether `wAJUN.totalSupply() == AJUN.balanceOf(wrapper)`. Tests cover fresh-wrapper, post-deposit, post-withdraw, and the over-collateralized path (third party direct-transfers AJUN to the wrapper without depositing — strict equality returns `false`, which is the correct signal for monitors to investigate even though it's not an under-backed condition).
 
 ```solidity
 function isInvariantHealthy() external view returns (bool) {
@@ -248,7 +236,7 @@ function isInvariantHealthy() external view returns (bool) {
 }
 ```
 
-This is informational — alerting infrastructure should still run off-chain checks, but a single-call view simplifies dashboards and on-chain liveness probes.
+Off-chain monitors should still run their own checks. The view is a convenience for dashboards and on-chain liveness probes.
 
 ### INFO-D: Existential-deposit reaping risk for the AJUN asset account
 
@@ -289,10 +277,10 @@ The suite is comprehensive (61 tests across deployment, deposit, withdraw, acces
 
 | # | Finding | Action |
 |---|---------|--------|
-| L-A | Use `SafeERC20` consistently in `deposit` / `withdraw` | Two one-line changes; no behavior change vs current precompile |
-| INFO-A | Hardhat config silently falls back to zero key on production networks | Fail-fast guard in `hardhat.config.ts` |
-| INFO-B | No timelock | Deploy `TimelockController` between multisig and the wrapper / ERC20 admin actions |
-| INFO-C | No on-chain invariant view | Optional convenience function |
+| L-A | Use `SafeERC20` consistently in `deposit` / `withdraw` | ✅ Fixed — both calls go through `safeTransferFrom` / `safeTransfer`; verified with `BadERC20` mock |
+| INFO-A | Hardhat config silently falls back to zero key on production networks | ✅ Fixed — config throws at load time when `HARDHAT_NETWORK` is `polkadotMainnet` / `polkadotTestnet` and `PRIVATE_KEY` is unset |
+| INFO-B | No timelock | Deploy `TimelockController` between multisig and the wrapper / ERC20 admin actions (operational, not contract change) |
+| INFO-C | No on-chain invariant view | ✅ Fixed — `isInvariantHealthy()` external view added |
 
 ### Documentation
 
@@ -317,4 +305,4 @@ Recommended sequence for the imminent mainnet rollout:
 4. Run a smoke test: `transferOwnership(testAddress)` → confirm `pendingOwner() == testAddress` and `owner()` unchanged → `acceptOwnership()` from `testAddress` → confirm transfer completes → transfer back. This validates the 2-step flow on production before handing control to the multisig.
 5. Proceed with [docs/PRODUCTION-CHECKLIST.md](docs/PRODUCTION-CHECKLIST.md) Phases 8–12. The multisig handoff itself now benefits from the 2-step protection. Phase 11 (Open To Public) flips the new allowlist gate off.
 
-The remaining open items (LOW-A: `SafeERC20` consistency in `deposit`/`withdraw`; INFO-A through INFO-E: operational concerns) are non-blocking for the production deploy and can be addressed in a follow-up upgrade if desired.
+All actionable contract-level findings (M-A, L-A, L-B, INFO-A, INFO-C) are now fixed and tested. The remaining items (INFO-B timelock, INFO-D existential-deposit dust, INFO-E mocks-scope) are operational / runbook concerns covered by [docs/PRODUCTION-CHECKLIST.md](PRODUCTION-CHECKLIST.md), not contract changes.
