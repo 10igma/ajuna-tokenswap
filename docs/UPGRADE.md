@@ -253,26 +253,31 @@ the storage slot does not move.
 
 ```
 AjunaERC20 (derived state, slots 0..):
-  Slot 0:        _tokenDecimals (uint8)
-  Slot 1..49:    __gap[49]      (reserved for future AjunaERC20 state)
+  Slot 0 [0]:    _tokenDecimals  (uint8, 1B)        }  packed into slot 0
+  Slot 0 [1]:    boundMinter     (address, 20B)     }  (audit ATS-04 fix)
+  Slot 1..49:    __gap[49]                          (reserved for future state)
 
   Inherited (namespaced, do not collide with derived slots):
-  - Initializable           (openzeppelin.storage.Initializable)
-  - ERC20Upgradeable        (openzeppelin.storage.ERC20)
-  - AccessControlUpgradeable (openzeppelin.storage.AccessControl)
-  - UUPSUpgradeable         (openzeppelin.storage.UUPSUpgradeable)
+  - Initializable                          (openzeppelin.storage.Initializable)
+  - ERC20Upgradeable                       (openzeppelin.storage.ERC20)
+  - AccessControlUpgradeable               (openzeppelin.storage.AccessControl)
+  - AccessControlDefaultAdminRulesUpgradeable
+                                           (openzeppelin.storage.AccessControlDefaultAdminRules)
+  - UUPSUpgradeable                        (openzeppelin.storage.UUPSUpgradeable)
 
 AjunaWrapper (derived state, slots 0..):
-  Slot 0:        token         (AjunaERC20)
-  Slot 1:        foreignAsset  (IERC20Precompile)
-  Slot 2..49:    __gap[48]     (reserved for future AjunaWrapper state)
+  Slot 0:        token             (AjunaERC20)
+  Slot 1 [0]:    foreignAsset      (IERC20Precompile, address, 20B)  }  packed
+  Slot 1 [20]:   allowlistEnabled  (bool, 1B)                        }  into slot 1
+  Slot 2:        allowlisted       (mapping head)
+  Slot 3..49:    __gap[47]                          (reserved for future state)
 
   Inherited (namespaced, do not collide with derived slots):
   - Initializable           (openzeppelin.storage.Initializable)
-  - Ownable2StepUpgradeable  (openzeppelin.storage.Ownable, openzeppelin.storage.Ownable2Step)
-  - ReentrancyGuard         (openzeppelin.storage.ReentrancyGuard)
+  - Ownable2StepUpgradeable (openzeppelin.storage.Ownable, openzeppelin.storage.Ownable2Step)
   - PausableUpgradeable     (openzeppelin.storage.Pausable)
   - UUPSUpgradeable         (openzeppelin.storage.UUPSUpgradeable)
+  - inline reentrancy guard (openzeppelin.storage.ReentrancyGuard slot, audit ATS-09 fix)
 ```
 
 **Practical rule for upgrades**: when adding new state to a derived contract,
@@ -478,28 +483,44 @@ If you want to permanently lock the implementation (renounce upgradeability):
 
 ### For AjunaERC20
 
-Renounce `UPGRADER_ROLE` from all holders:
+`UPGRADER_ROLE` can be renounced single-step. `DEFAULT_ADMIN_ROLE` requires
+the two-step + delayed flow (see `AccessControlDefaultAdminRulesUpgradeable`).
 
 ```solidity
-// After all upgrades are complete
+// 1. Renounce UPGRADER_ROLE from all holders (single-step).
 token.renounceRole(UPGRADER_ROLE, multisigAddress);
-// If DEFAULT_ADMIN_ROLE is also renounced, no one can ever grant UPGRADER_ROLE again
-token.renounceRole(DEFAULT_ADMIN_ROLE, multisigAddress);
+
+// 2. To renounce DEFAULT_ADMIN_ROLE: begin transfer to address(0), wait
+//    the configured delay, then renounce.
+token.beginDefaultAdminTransfer(address(0));
+// (wait `defaultAdminDelay()` seconds — production: 5 days)
+token.renounceRole(DEFAULT_ADMIN_ROLE, currentDefaultAdmin);
 ```
+
+After both, `MINTER_ROLE` is fixed at the bound wrapper (no admin remains
+to grant it elsewhere) and the ERC20 implementation is permanently locked.
 
 ### For AjunaWrapper
 
-Renounce ownership:
+`renounceOwnership()` on the wrapper is **permanently disabled** — calling it
+reverts with `"AjunaWrapper: renouncing ownership is disabled"`. The wrapper
+relies on a live owner for `pause`/`rescue`/`upgrade`; renouncing would brick
+every admin lever on a treasury holding user funds (audit context: original
+M-A finding).
 
-```solidity
-wrapper.renounceOwnership();
-```
+To make the wrapper non-upgradeable while keeping `pause`/`rescue` working,
+follow the **Alternative** below — deploy a final implementation whose
+`_authorizeUpgrade` always reverts.
 
-> **WARNING**: This is irreversible. The contract becomes permanently non-upgradeable, non-pausable, and the foreign asset address becomes immutable. Only do this when you are fully confident the contract is bug-free and feature-complete.
+> **WARNING**: Both options are irreversible. Only execute when the contract
+> is bug-free and feature-complete and the team has accepted the loss of
+> emergency upgrade capability.
 
 ### Alternative: Deploy a Non-UUPS Implementation
 
-Deploy a new implementation that **does not** include `_authorizeUpgrade()`:
+Deploy a new implementation that overrides `_authorizeUpgrade` to revert,
+then UUPS-upgrade to it. This permanently disables further upgrades while
+preserving the rest of the admin surface:
 
 ```solidity
 contract AjunaWrapperFinal is AjunaWrapper {

@@ -54,7 +54,7 @@ npm test
 npx hardhat test
 ```
 
-This runs all 91 tests in Hardhat's in-memory EVM — no local node required:
+This runs all 112 tests in Hardhat's in-memory EVM — no local node required:
 
 ```
   AjunaWrapper System
@@ -74,10 +74,10 @@ This runs all 91 tests in Hardhat's in-memory EVM — no local node required:
     Reentrancy Protection (1 test)
     Event Validation (4 tests)
 
-  91 passing
+  112 passing
 ```
 
-If all 91 tests pass, the Solidity logic is verified. You're ready to move to integration testing.
+If all 112 tests pass, the Solidity logic is verified. You're ready to move to integration testing.
 
 ---
 

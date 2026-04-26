@@ -1,0 +1,16 @@
+'npx hardhat clean' running (wd: /home/darkfriend/projects/antigravity/ajuna-tokenswap)
+'npx hardhat clean --global' running (wd: /home/darkfriend/projects/antigravity/ajuna-tokenswap)
+'npx hardhat compile --force' running (wd: /home/darkfriend/projects/antigravity/ajuna-tokenswap)
+INFO:Detectors:
+Detector: incorrect-equality
+AjunaWrapper.isInvariantHealthy() (contracts/AjunaWrapper.sol#228-230) uses a dangerous strict equality:
+	- token.totalSupply() == foreignAsset.balanceOf(address(this)) (contracts/AjunaWrapper.sol#229)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+INFO:Detectors:
+Detector: naming-convention
+Variable AjunaERC20.__gap (contracts/AjunaERC20.sol#107) is not in mixedCase
+Parameter AjunaWrapper.initialize(address,address)._token (contracts/AjunaWrapper.sol#75) is not in mixedCase
+Parameter AjunaWrapper.initialize(address,address)._foreignAssetPrecompile (contracts/AjunaWrapper.sol#76) is not in mixedCase
+Variable AjunaWrapper.__gap (contracts/AjunaWrapper.sol#296) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Slither:. analyzed (45 contracts with 101 detectors), 5 result(s) found

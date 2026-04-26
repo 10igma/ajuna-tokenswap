@@ -13,7 +13,10 @@ contract AjunaERC20V2 is AjunaERC20 {
     uint256 public version;
 
     /// @notice Migration function called via upgradeToAndCall().
-    function migrateToV2() external reinitializer(2) {
+    /// @dev `onlyRole(UPGRADER_ROLE)` so the migration cannot be front-run
+    ///      by any caller between `upgradeToAndCall(impl, "0x")` and the
+    ///      planned migration. Audit ATS-03.
+    function migrateToV2() external reinitializer(2) onlyRole(UPGRADER_ROLE) {
         version = 2;
     }
 

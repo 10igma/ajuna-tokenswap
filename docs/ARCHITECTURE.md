@@ -220,10 +220,13 @@ Concrete consequences:
 
 ### AjunaERC20 (derived storage, slots starting at 0)
 
-| Slot Range | Variable | Type | Source |
-|------------|----------|------|--------|
-| 0 | `_tokenDecimals` | `uint8` | `AjunaERC20` |
-| 1 – 49 | `__gap[49]` | `uint256[49]` | `AjunaERC20` (forward-compat reserve) |
+| Slot | Offset | Bytes | Variable | Source |
+|------|--------|-------|----------|--------|
+| 0 | 0 | 1 | `_tokenDecimals` (`uint8`) | `AjunaERC20` |
+| **0** | **1** | **20** | **`boundMinter` (address)** — packed | `AjunaERC20` (audit ATS-04 fix) |
+| 1 – 49 | 0 | 32 each | `__gap[49]` | `AjunaERC20` (forward-compat reserve) |
+
+`_tokenDecimals` (1 byte) and `boundMinter` (20 bytes) co-pack into slot 0 (21 bytes used), so neither consumes a `__gap` slot.
 
 Inherited state lives at namespaced slots, e.g. (informational):
 
@@ -232,14 +235,19 @@ Inherited state lives at namespaced slots, e.g. (informational):
 | `openzeppelin.storage.Initializable` | `_initialized`, `_initializing` |
 | `openzeppelin.storage.ERC20` | balances, allowances, total supply, name, symbol |
 | `openzeppelin.storage.AccessControl` | role mappings |
+| `openzeppelin.storage.AccessControlDefaultAdminRules` | `_pendingDefaultAdmin`, `_currentDelay`, schedules |
 
 ### AjunaWrapper (derived storage, slots starting at 0)
 
-| Slot Range | Variable | Type | Source |
-|------------|----------|------|--------|
-| 0 | `token` | `AjunaERC20` (address) | `AjunaWrapper` |
-| 1 | `foreignAsset` | `IERC20Precompile` (address) | `AjunaWrapper` |
-| 2 – 49 | `__gap[48]` | `uint256[48]` | `AjunaWrapper` (forward-compat reserve) |
+Verified via solc 0.8.30 `outputSelection.storageLayout`:
+
+| Slot | Offset | Bytes | Variable | Source |
+|------|--------|-------|----------|--------|
+| 0 | 0 | 20 | `token` (`AjunaERC20`, address) | `AjunaWrapper` |
+| 1 | 0 | 20 | `foreignAsset` (`IERC20Precompile`, address) | `AjunaWrapper` |
+| **1** | **20** | **1** | **`allowlistEnabled` (bool)** — packed | `AjunaWrapper` |
+| 2 | 0 | 32 | `allowlisted` (`mapping(address => bool)`) | `AjunaWrapper` |
+| 3 – 49 | 0 | 32 each | `__gap[47]` | `AjunaWrapper` (forward-compat reserve) |
 
 Inherited state lives at namespaced slots, e.g. (informational):
 
@@ -247,8 +255,9 @@ Inherited state lives at namespaced slots, e.g. (informational):
 |-----------|-------|
 | `openzeppelin.storage.Initializable` | `_initialized`, `_initializing` |
 | `openzeppelin.storage.Ownable` | `_owner` |
-| `openzeppelin.storage.ReentrancyGuard` | `_status` |
+| `openzeppelin.storage.Ownable2Step` | `_pendingOwner` |
 | `openzeppelin.storage.Pausable` | `_paused` |
+| `openzeppelin.storage.ReentrancyGuard` | reentrancy `_status` (inline guard, audit ATS-09 fix) |
 
 ---
 
@@ -414,7 +423,7 @@ interface IERC20Precompile {
 
 ```
 Level 1: Hardhat In-Memory EVM
-  ├── 91 unit tests (test/wrapper.test.ts)
+  ├── 112 unit tests (test/wrapper.test.ts)
   ├── Mock Foreign Asset (deployed in test setup)
   ├── Proxy deployment helpers (deployERC20Proxy, deployWrapperProxy)
   └── Tests: deployment, deposit, withdraw, access, pause, rescue, UUPS
@@ -485,7 +494,7 @@ ajuna-tokenswap/
 │       └── IERC20Precompile.sol        # Foreign Asset ERC20 interface
 │
 ├── test/
-│   └── wrapper.test.ts                 # 91 unit tests (Hardhat in-memory)
+│   └── wrapper.test.ts                 # 112 unit tests (Hardhat in-memory)
 │
 ├── scripts/
 │   ├── setup_node.sh                   # Build revive-dev-node from source

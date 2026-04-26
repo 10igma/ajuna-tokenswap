@@ -76,11 +76,14 @@ async function main() {
   const wrapperAddr = await wrapper.getAddress();
   console.log("AjunaWrapper proxy deployed at:", wrapperAddr);
 
-  // 3. Grant MINTER_ROLE to Wrapper
-  const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
-  const grantTx = await token.grantRole(MINTER_ROLE, wrapperAddr);
-  await grantTx.wait();
-  console.log("MINTER_ROLE granted to Wrapper");
+  // 3. Bind MINTER_ROLE to the wrapper (one-shot). bindMinter atomically
+  //    sets `boundMinter = wrapper` and grants MINTER_ROLE; subsequent
+  //    `grantRole(MINTER_ROLE, X)` calls revert unless X == wrapper.
+  //    Closes audit ATS-04: prevents an ERC20 admin from minting unbacked
+  //    wAJUN even if `wrapper.owner()` and `token.defaultAdmin()` diverge.
+  const bindTx = await token.bindMinter(wrapperAddr);
+  await bindTx.wait();
+  console.log("MINTER_ROLE bound to Wrapper (boundMinter set)");
 
   // Print summary for downstream scripts to parse
   console.log("\n═══ DEPLOYED (UUPS Proxies) ═══");

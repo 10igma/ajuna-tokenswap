@@ -1,0 +1,174 @@
+# Static analysis & verification tooling — exact commands, versions, raw output
+
+Working directory: `/home/darkfriend/projects/antigravity/ajuna-tokenswap`
+Date of run: 2026-04-26
+Commit at audit time: `5b13a8b feat(security): close out REVIEW_v2 findings (MED-1, MED-2, LOW-1, INFO-1/3/4/5)` (clean tree).
+
+## 1. Solidity compiler (sanity)
+
+```
+$ npx hardhat compile
+Nothing to compile / Successfully compiled 48 Solidity files
+```
+
+`hardhat.config.ts` was edited during the audit to add `outputSelection['*']['*'] = ['storageLayout']` so that the OZ upgrades-core plugin and the storage-map dump can read storageLayout from the build-info JSON. The original setting (no storageLayout) silently yielded an OZ plugin error, which is itself worth flagging — fresh repos cannot validate upgrade safety until the operator adds this output selection.
+
+## 2. Hardhat test suite (baseline + audit PoCs)
+
+Baseline:
+
+```
+$ npx hardhat test
+  AjunaWrapper System
+    Deployment: 5 passing
+    Deposit (Wrap): 4 passing
+    Withdraw (Unwrap): 5 passing
+    Access Control: 4 passing
+    Pausable: 4 passing
+    Rescue: 4 passing
+    Multi-User: 1 passing
+    UUPS Upgradeability: 12 passing
+    Ownership Transfer: 4 passing
+    Role Management: 3 passing
+    Rescue Edge Cases: 3 passing
+    Pause Edge Cases: 2 passing
+    Zero-Amount Edge Cases: 3 passing
+    Reentrancy Protection: 1 passing
+    Event Validation: 4 passing
+    Allowlist: 16 passing
+    SafeERC20 Defense: 2 passing
+    isInvariantHealthy: 4 passing
+    Fee-on-transfer Defense: 1 passing
+    Allowlist Batch Cap: 2 passing
+    Admin Handoff (Default Admin Rules): 6 passing
+
+  91 passing (4s)
+```
+
+No flaky behavior across three runs. All baseline tests pass.
+
+Audit PoCs added in `test/audit/`:
+
+```
+$ npx hardhat test test/audit/storage_probe.test.ts test/audit/spec_mismatch.test.ts
+  [AUDIT] storage probe — ReentrancyGuard namespaced slot on proxy
+    ✔ proxy storage at the namespaced ReentrancyGuard slot starts at 0 (NOT 1==NOT_ENTERED)
+  [AUDIT] ATS-02 — deploy_production.sh contradicts AccessControlDefaultAdminRules
+    ✔ step 4 (grantRole(DEFAULT_ADMIN_ROLE, multisig)) reverts
+    ✔ step 5 (renounceRole(DEFAULT_ADMIN_ROLE, deployer)) reverts when no transfer is pending
+  [AUDIT] ATS-04 — V2 mock migration is unauthenticated
+    ✔ AjunaWrapperV2.migrateToV2 can be called by any caller after upgrade
+    ✔ AjunaERC20V2.migrateToV2 can be called by any caller after upgrade
+  [AUDIT] ATS-06 — divergence between wrapper.owner and erc20.defaultAdmin breaks backing
+    ✔ ERC20 admin (≠ wrapper owner) can mint unbacked wAJUN, breaking the 1:1 invariant
+
+  6 passing
+```
+
+## 3. OpenZeppelin upgrades-core validate
+
+`@openzeppelin/upgrades-core@1.50.x` (latest at audit time, fetched via `npx --yes`).
+
+```
+$ npx --yes @openzeppelin/upgrades-core validate artifacts/build-info
+Note: Reinitializers are not included in validations by default
+    contracts/mocks/AjunaERC20V2.sol:16: If you want to validate this function as an initializer, annotate it with '@custom:oz-upgrades-validate-as-initializer'
+Note: Reinitializers are not included in validations by default
+    contracts/mocks/AjunaWrapperV2.sol:16: If you want to validate this function as an initializer, annotate it with '@custom:oz-upgrades-validate-as-initializer'
+
+ ✔  contracts/AjunaERC20.sol:AjunaERC20
+
+ ✘  contracts/AjunaWrapper.sol:AjunaWrapper
+      @openzeppelin/contracts/utils/ReentrancyGuard.sol:58: Contract `ReentrancyGuard` has a constructor
+          Define an initializer instead
+          https://zpl.in/upgrades/error-001
+
+ ✔  contracts/mocks/AjunaERC20V2.sol:AjunaERC20V2
+
+ ✘  contracts/mocks/AjunaWrapperV2.sol:AjunaWrapperV2
+      @openzeppelin/contracts/utils/ReentrancyGuard.sol:58: Contract `ReentrancyGuard` has a constructor
+          Define an initializer instead
+          https://zpl.in/upgrades/error-001
+
+FAILED (4 upgradeable contracts detected, 2 passed, 2 failed)
+```
+
+This output is the basis of finding ATS-09. The plugin would refuse to deploy or upgrade `AjunaWrapper` without an `@custom:oz-upgrades-unsafe-allow` annotation in the inheritance, because the parent `ReentrancyGuard` (non-upgradeable v5.5+) has a constructor that runs only on the implementation. Behavior on the proxy is currently safe by accident (proxy storage at the namespaced slot starts at 0, which is not equal to `ENTERED == 2`), but the plugin's gate is correct — using `ReentrancyGuardUpgradeable` would remove the warning entirely.
+
+## 4. Slither (static analyzer)
+
+`slither-analyzer 0.11.5`, installed via `pip --user` and run with `env -i HOME=$HOME PATH=…` to bypass an unrelated `solc-select` configuration issue (`/usr/.solc-select` was not writable on this host).
+
+Default detectors:
+
+```
+$ slither . --filter-paths "node_modules|contracts/mocks" --foundry-out-directory artifacts
+'npx hardhat clean' / 'compile --force' running
+INFO:Detectors:
+Detector: incorrect-equality
+AjunaWrapper.isInvariantHealthy() (contracts/AjunaWrapper.sol#228-230) uses a dangerous strict equality:
+    - token.totalSupply() == foreignAsset.balanceOf(address(this))
+INFO:Detectors:
+Detector: naming-convention
+Variable AjunaERC20.__gap (contracts/AjunaERC20.sol#107) is not in mixedCase
+Parameter AjunaWrapper.initialize(address,address)._token (contracts/AjunaWrapper.sol#75) is not in mixedCase
+Parameter AjunaWrapper.initialize(address,address)._foreignAssetPrecompile (contracts/AjunaWrapper.sol#76) is not in mixedCase
+Variable AjunaWrapper.__gap (contracts/AjunaWrapper.sol#296) is not in mixedCase
+INFO:Slither:. analyzed (45 contracts with 101 detectors), 5 result(s) found
+```
+
+All-detectors run additionally surfaced low-level-call and missing-zero-check on `contracts/mocks/ReentrantToken.sol`, which is intentional in a mock and not in scope.
+
+The single substantive output — `incorrect-equality` on `isInvariantHealthy` — is intentional: the function is documented as a strict-equality health probe whose `false` return is an alarm signal for off-chain monitors. The function name conflates over- and under-collateralization (ATS-12 INFO).
+
+Slither human-summary:
+
+```
+$ slither . --filter-paths "node_modules" --foundry-out-directory artifacts --print human-summary
+Compiled with Builder
+Total number of contracts in source files: 3
+Number of contracts in dependencies: 37
+Number of contracts in tests       : 5
+Source lines of code (SLOC) in source files: 159
+Source lines of code (SLOC) in dependencies: 2267
+Number of  assembly lines: 0
+Number of optimization issues: 0
+Number of informational issues: 7
+Number of low issues: 1
+Number of medium issues: 1
+Number of high issues: 0
+```
+
+## 5. Storage-layout dump (raw solc output)
+
+`solc 0.8.30` via `node_modules/solc`. Manual driver script (kept ephemeral) requested `outputSelection.storageLayout` and printed slot/offset/type for every linearized variable in the production contracts. Results documented in `audit/storage-layout.md`.
+
+```
+══ contracts/AjunaWrapper.sol:AjunaWrapper ══
+  slot 0 off 0  size 20  token         (t_contract(AjunaERC20)8622)
+  slot 1 off 0  size 20  foreignAsset  (t_contract(IERC20Precompile)9229)
+  slot 1 off 20 size 1   allowlistEnabled (t_bool)
+  slot 2 off 0  size 32  allowlisted   (t_mapping(t_address,t_bool))
+  slot 3 off 0  size 1472 __gap        (t_array(t_uint256)46_storage)
+
+══ contracts/AjunaERC20.sol:AjunaERC20 ══
+  slot 0 off 0  size 1   _tokenDecimals (t_uint8)
+  slot 1 off 0  size 1568 __gap         (t_array(t_uint256)49_storage)
+```
+
+This is the basis for ATS-05, ATS-06.
+
+## 6. Unavailable / not-attempted tools
+
+- **Aderyn** — not installed and no offline binary available on the audit host. A manual review covered the same ground (immutables, missing-event-emission, dead code) without finding additional issues.
+- **Mythril** — not attempted; symbolic-execution coverage on this small surface would not surpass slither + manual review for the time budget.
+- **Echidna / Foundry invariant fuzzing** — not attempted. The invariant under test (`totalSupply == balanceOf(wrapper)`) is exercised by every assertion in `wrapper.test.ts` (`checkInvariant` called after every state-changing op) and by the targeted PoCs in `test/audit/`. A property-based fuzz job would harden coverage; recommended in the report under "Test-suite assessment".
+- **Hardhat-upgrades validateUpgrade** — superseded by the standalone OZ upgrades-core run above; same engine.
+
+## 7. Manual review pass count
+
+- `contracts/AjunaWrapper.sol` — 3 reads end-to-end; line-by-line for deposit/withdraw/initialize/_authorizeUpgrade.
+- `contracts/AjunaERC20.sol` — 2 reads end-to-end; line-by-line for initialize/burnFrom/_authorizeUpgrade.
+- `contracts/mocks/*` — 1 read each, focused on whether mocks could shadow real semantics.
+- `scripts/deploy_*` and `docs/PRODUCTION-CHECKLIST.md` — cross-checked against the contract code; ATS-01 surfaced from this delta.
+- `docs/SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/UPGRADE.md` — read in full; spec-mismatch findings (ATS-02, ATS-06) come from these.

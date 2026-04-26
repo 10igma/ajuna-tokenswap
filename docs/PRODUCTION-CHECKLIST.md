@@ -148,6 +148,10 @@ These checks should happen before announcing the deployment as ready.
       allowlist gate ON by default — the deployer (and later the multisig
       after `acceptOwnership`) is implicitly allowed; everyone else is
       blocked from `deposit` / `withdraw` until added or the gate is opened.
+- [ ] Confirm `token.boundMinter() == <wrapper proxy address>`. The
+      `deploy_wrapper.ts` script calls `bindMinter` to atomically grant
+      `MINTER_ROLE` to the wrapper *and* lock out any further
+      `MINTER_ROLE` grants — closes audit ATS-04 (divergence-mint).
 
 ## Phase 6: Existential Deposit Protection
 

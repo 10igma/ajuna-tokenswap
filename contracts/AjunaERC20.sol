@@ -21,6 +21,13 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
  *      can mint or burn. Burning requires prior ERC20 approval from the token
  *      holder (standard `burnFrom` pattern). Upgrades are restricted to accounts
  *      with `UPGRADER_ROLE`.
+ *
+ *      `MINTER_ROLE` is **bound** to a single address (`boundMinter`) via the
+ *      one-shot `bindMinter` flow. After binding, `_grantRole(MINTER_ROLE, X)`
+ *      reverts unless `X == boundMinter`. This closes the audit's ATS-04
+ *      finding: an `DEFAULT_ADMIN_ROLE` holder that diverges from the
+ *      wrapper's `owner()` cannot grant `MINTER_ROLE` to a new address and
+ *      mint unbacked wAJUN.
  */
 contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlDefaultAdminRulesUpgradeable, UUPSUpgradeable {
     /// @notice Role identifier for accounts permitted to mint and burn tokens.
@@ -30,7 +37,17 @@ contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlDefaultAdmi
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
     /// @dev Token decimals, set once during initialization to match the native AJUN asset.
+    ///      Packed in slot 0 with `boundMinter` (1 + 20 = 21 bytes).
     uint8 private _tokenDecimals;
+
+    /// @notice The exclusively bound minter (intended: the `AjunaWrapper` proxy address).
+    ///         Once set via `bindMinter`, no other address can ever hold
+    ///         `MINTER_ROLE`. The current `_grantRole` override enforces this.
+    ///         Packs into slot 0 with `_tokenDecimals`.
+    address public boundMinter;
+
+    /// @notice Emitted when `bindMinter` succeeds. Fires exactly once per proxy.
+    event MinterBound(address indexed minter);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -69,6 +86,43 @@ contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlDefaultAdmi
     }
 
     /**
+     * @notice One-shot binding of the exclusive `MINTER_ROLE` holder. Callable
+     *         once by `DEFAULT_ADMIN_ROLE`. The bound address is automatically
+     *         granted `MINTER_ROLE`; subsequent grants of `MINTER_ROLE` to any
+     *         other address revert.
+     * @dev    Closes ATS-04 (audit/REPORT.md): even if `DEFAULT_ADMIN_ROLE`
+     *         and the wrapper's `owner()` diverge, the ERC20 admin cannot
+     *         grant `MINTER_ROLE` to an attacker-controlled address. The bound
+     *         minter is the wrapper proxy address (stable across UUPS upgrades).
+     * @param minter The wrapper proxy address that becomes the sole minter.
+     */
+    function bindMinter(address minter) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(boundMinter == address(0), "AjunaERC20: minter already bound");
+        require(minter != address(0), "AjunaERC20: zero minter");
+        boundMinter = minter;
+        _grantRole(MINTER_ROLE, minter);
+        emit MinterBound(minter);
+    }
+
+    /**
+     * @dev Enforces the `boundMinter` invariant on every grant of `MINTER_ROLE`.
+     *      All other roles (including `DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE`)
+     *      pass through unchanged. The `boundMinter == 0` early-out lets
+     *      `bindMinter` perform the very first grant of `MINTER_ROLE` cleanly.
+     */
+    function _grantRole(bytes32 role, address account)
+        internal
+        virtual
+        override(AccessControlDefaultAdminRulesUpgradeable)
+        returns (bool)
+    {
+        if (role == MINTER_ROLE && boundMinter != address(0)) {
+            require(account == boundMinter, "AjunaERC20: MINTER_ROLE bound to a single address");
+        }
+        return super._grantRole(role, account);
+    }
+
+    /**
      * @notice Creates `amount` new tokens and assigns them to `to`.
      * @dev Restricted to accounts with MINTER_ROLE.
      * @param to     Recipient of the minted tokens.
@@ -100,9 +154,8 @@ contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlDefaultAdmi
 
     /**
      * @dev Reserved storage gap for future base contract upgrades.
-     *      `AccessControlDefaultAdminRulesUpgradeable` adds its own state at a
-     *      separate ERC-7201 namespaced slot, not in this gap. Same gap budget
-     *      as before (49 slots, 1 used by `_tokenDecimals`).
+     *      Slot 0: `_tokenDecimals` (1B) packed with `boundMinter` (20B). 1 slot used.
+     *      `__gap[49]` follows.
      */
     uint256[49] private __gap;
 }

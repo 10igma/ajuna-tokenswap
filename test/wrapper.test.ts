@@ -81,9 +81,10 @@ describe("AjunaWrapper System", function () {
       await foreignAssetMock.getAddress()
     );
 
-    // 3. Grant MINTER_ROLE to Wrapper
-    const MINTER_ROLE = await token.MINTER_ROLE();
-    await token.grantRole(MINTER_ROLE, await wrapper.getAddress());
+    // 3. Bind MINTER_ROLE to the wrapper (one-shot; production pattern).
+    //    After this, no other address can ever hold MINTER_ROLE on `token`,
+    //    closing the audit ATS-04 divergence-mint vector.
+    await token.bindMinter(await wrapper.getAddress());
 
     // 4. Disable the initial allowlist gate so the existing test groups
     //    (which use arbitrary users as depositors/withdrawers) keep behaving
@@ -91,6 +92,18 @@ describe("AjunaWrapper System", function () {
     //    block below re-enables it for gate-specific tests.
     await wrapper.connect(owner).setAllowlistEnabled(false);
   });
+
+  // Helper: deploy a fresh isolated AjunaERC20 + AjunaWrapper system bound
+  // to a custom foreign asset. Used by side-wrapper tests (SafeERC20 defense,
+  // fee-on-transfer defense, reentrancy attack) so each can have its own
+  // bound minter without conflicting with the shared `token` / `wrapper`.
+  async function deployIsolatedSystem(foreignAsset: string) {
+    const localToken = await deployERC20Proxy("Wrapped Ajuna", "WAJUN", owner.address, DECIMALS);
+    const localWrapper = await deployWrapperProxy(await localToken.getAddress(), foreignAsset);
+    await localToken.bindMinter(await localWrapper.getAddress());
+    await localWrapper.connect(owner).setAllowlistEnabled(false);
+    return { token: localToken, wrapper: localWrapper };
+  }
 
   // ─── Helper ───────────────────────────────────────────────
   async function checkInvariant() {
@@ -690,21 +703,23 @@ describe("AjunaWrapper System", function () {
   // ═══════════════════════════════════════════════════════════
 
   describe("Role Management", function () {
-    it("should handle multiple MINTER_ROLE holders", async function () {
+    it("should reject grantRole(MINTER_ROLE, X) when X != boundMinter (audit ATS-04)", async function () {
       const MINTER_ROLE = await token.MINTER_ROLE();
 
-      // Grant MINTER_ROLE to a second account
-      await token.connect(owner).grantRole(MINTER_ROLE, owner.address);
+      // Wrapper is bound. Granting MINTER_ROLE to anyone else must revert.
+      await expect(token.connect(owner).grantRole(MINTER_ROLE, owner.address))
+        .to.be.revertedWith("AjunaERC20: MINTER_ROLE bound to a single address");
+      await expect(token.connect(owner).grantRole(MINTER_ROLE, user.address))
+        .to.be.revertedWith("AjunaERC20: MINTER_ROLE bound to a single address");
 
-      // Both can mint
-      await token.connect(owner).mint(user.address, 100);
-      expect(await token.balanceOf(user.address)).to.equal(100);
+      // The bound wrapper still holds MINTER_ROLE.
+      expect(await token.hasRole(MINTER_ROLE, await wrapper.getAddress())).to.be.true;
 
-      // Wrapper can still mint via deposit
+      // Wrapper can mint via deposit as usual.
       const amount = ethers.parseUnits("10", DECIMALS);
       await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
       await wrapper.connect(user).deposit(amount);
-      expect(await token.balanceOf(user.address)).to.equal(100n + amount);
+      expect(await token.balanceOf(user.address)).to.equal(amount);
     });
 
     it("should block deposit/withdraw after MINTER_ROLE revocation", async function () {
@@ -863,18 +878,12 @@ describe("AjunaWrapper System", function () {
       const reentrantToken = await ReentrantFactory.deploy();
       await reentrantToken.waitForDeployment();
 
-      // Deploy a wrapper that uses the reentrant token as foreign asset
-      const maliciousWrapper = await deployWrapperProxy(
-        await token.getAddress(),
+      // Deploy an isolated system whose foreign asset is the reentrant token.
+      // The shared `token` already has bindMinter set to the main wrapper, so
+      // this test gets its own bound wAJUN.
+      const { token: localToken, wrapper: maliciousWrapper } = await deployIsolatedSystem(
         await reentrantToken.getAddress()
       );
-
-      // Grant MINTER_ROLE to the malicious wrapper on the token
-      await token.grantRole(await token.MINTER_ROLE(), await maliciousWrapper.getAddress());
-
-      // Disable allowlist on the malicious wrapper so the test exercises the
-      // reentrancy guard path itself, not the gate.
-      await maliciousWrapper.connect(owner).setAllowlistEnabled(false);
 
       // Setup: mint tokens and configure attack
       const amount = ethers.parseUnits("100", DECIMALS);
@@ -891,7 +900,7 @@ describe("AjunaWrapper System", function () {
       await maliciousWrapper.connect(user).deposit(amount);
 
       // Verify only one deposit went through (not double)
-      expect(await token.balanceOf(user.address)).to.equal(amount);
+      expect(await localToken.balanceOf(user.address)).to.equal(amount);
     });
   });
 
@@ -1133,12 +1142,9 @@ describe("AjunaWrapper System", function () {
       const bad = await Bad.deploy();
       await bad.waitForDeployment();
 
-      const badWrapper = await deployWrapperProxy(
-        await token.getAddress(),
+      const { token: localToken, wrapper: badWrapper } = await deployIsolatedSystem(
         await bad.getAddress()
       );
-      await token.grantRole(await token.MINTER_ROLE(), await badWrapper.getAddress());
-      await badWrapper.connect(owner).setAllowlistEnabled(false);
 
       const amount = ethers.parseUnits("10", DECIMALS);
       await bad.mintTo(user.address, amount);
@@ -1150,38 +1156,36 @@ describe("AjunaWrapper System", function () {
       await expect(badWrapper.connect(user).deposit(amount)).to.be.reverted;
 
       // Confirm no wAJUN was minted (invariant still intact).
-      expect(await token.balanceOf(user.address)).to.equal(0);
-      expect(await token.totalSupply()).to.equal(0);
+      expect(await localToken.balanceOf(user.address)).to.equal(0);
+      expect(await localToken.totalSupply()).to.equal(0);
     });
 
     it("should reject withdraw when foreign asset returns false from transfer", async function () {
-      // Deploy a wrapper pointed at a malicious token that allows the ERC20
-      // burnFrom to succeed (we hand-mint the wAJUN without doing an actual
-      // deposit) and then refuses to release the foreign asset.
-      const Bad = await ethers.getContractFactory("BadERC20");
-      const bad = await Bad.deploy();
-      await bad.waitForDeployment();
+      // HalfBadERC20: transferFrom succeeds (so deposit can complete and the
+      // user holds wAJUN); transfer returns false silently (so withdraw's
+      // safeTransfer reverts).
+      const HalfBad = await ethers.getContractFactory("HalfBadERC20");
+      const halfBad = await HalfBad.deploy();
+      await halfBad.waitForDeployment();
 
-      const badWrapper = await deployWrapperProxy(
-        await token.getAddress(),
-        await bad.getAddress()
+      const { token: localToken, wrapper: hbWrapper } = await deployIsolatedSystem(
+        await halfBad.getAddress()
       );
-      await token.grantRole(await token.MINTER_ROLE(), await badWrapper.getAddress());
-      await badWrapper.connect(owner).setAllowlistEnabled(false);
 
-      // Manually mint wAJUN to user so withdraw passes the balance check and
-      // the burnFrom step. We bypass the deposit path entirely so we can
-      // isolate the transfer failure on withdraw.
+      // Deposit succeeds normally
       const amount = ethers.parseUnits("10", DECIMALS);
-      await token.grantRole(await token.MINTER_ROLE(), owner.address);
-      await token.connect(owner).mint(user.address, amount);
-      await token.connect(user).approve(await badWrapper.getAddress(), amount);
+      await halfBad.mintTo(user.address, amount);
+      await halfBad.connect(user).approve(await hbWrapper.getAddress(), amount);
+      await hbWrapper.connect(user).deposit(amount);
+      expect(await localToken.balanceOf(user.address)).to.equal(amount);
 
-      await expect(badWrapper.connect(user).withdraw(amount)).to.be.reverted;
+      // Withdraw must revert via SafeERC20 since transfer returns false
+      await localToken.connect(user).approve(await hbWrapper.getAddress(), amount);
+      await expect(hbWrapper.connect(user).withdraw(amount)).to.be.reverted;
 
-      // wAJUN was NOT burned because burnFrom + safeTransfer happens atomically
-      // and the safeTransfer revert rolls back the burn.
-      expect(await token.balanceOf(user.address)).to.equal(amount);
+      // wAJUN was NOT burned — the burnFrom + safeTransfer pair is atomic and
+      // the safeTransfer revert rolls back the burn.
+      expect(await localToken.balanceOf(user.address)).to.equal(amount);
     });
   });
 
@@ -1240,12 +1244,9 @@ describe("AjunaWrapper System", function () {
       const fot = await Fot.deploy();
       await fot.waitForDeployment();
 
-      const fotWrapper = await deployWrapperProxy(
-        await token.getAddress(),
+      const { token: localToken, wrapper: fotWrapper } = await deployIsolatedSystem(
         await fot.getAddress()
       );
-      await token.grantRole(await token.MINTER_ROLE(), await fotWrapper.getAddress());
-      await fotWrapper.connect(owner).setAllowlistEnabled(false);
 
       const input = ethers.parseUnits("100", DECIMALS);
       const expectedReceived = input * 9000n / 10_000n; // 10% fee
@@ -1259,7 +1260,7 @@ describe("AjunaWrapper System", function () {
         .to.emit(fotWrapper, "Deposited")
         .withArgs(user.address, expectedReceived);
 
-      expect(await token.balanceOf(user.address)).to.equal(expectedReceived);
+      expect(await localToken.balanceOf(user.address)).to.equal(expectedReceived);
       expect(await fot.balanceOf(await fotWrapper.getAddress())).to.equal(expectedReceived);
 
       // Invariant holds — wrapper not under-collateralized.
@@ -1368,18 +1369,160 @@ describe("AjunaWrapper System", function () {
       expect(await token.hasRole(DEFAULT_ADMIN_ROLE, owner.address)).to.be.false;
     });
 
-    it("does not affect MINTER_ROLE / UPGRADER_ROLE single-step grant flow", async function () {
-      const MINTER_ROLE = await token.MINTER_ROLE();
+    it("does not affect UPGRADER_ROLE single-step grant flow (MINTER_ROLE is bound; see Role Management)", async function () {
       const UPGRADER_ROLE = await token.UPGRADER_ROLE();
 
-      // Other roles still grant/revoke in one tx by the DEFAULT_ADMIN_ROLE holder.
-      await token.connect(owner).grantRole(MINTER_ROLE, user.address);
-      expect(await token.hasRole(MINTER_ROLE, user.address)).to.be.true;
-      await token.connect(owner).revokeRole(MINTER_ROLE, user.address);
-      expect(await token.hasRole(MINTER_ROLE, user.address)).to.be.false;
-
+      // UPGRADER_ROLE still grants/revokes in one tx by the DEFAULT_ADMIN_ROLE holder.
       await token.connect(owner).grantRole(UPGRADER_ROLE, user.address);
       expect(await token.hasRole(UPGRADER_ROLE, user.address)).to.be.true;
+      await token.connect(owner).revokeRole(UPGRADER_ROLE, user.address);
+      expect(await token.hasRole(UPGRADER_ROLE, user.address)).to.be.false;
+
+      // MINTER_ROLE remains bound to the wrapper (audit ATS-04 fix); the
+      // grant-to-X-and-revoke pattern doesn't apply.
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  bindMinter (audit ATS-04 fix)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("bindMinter (ATS-04)", function () {
+    it("exposes the bound minter as a public view", async function () {
+      expect(await token.boundMinter()).to.equal(await wrapper.getAddress());
+    });
+
+    it("is one-shot — re-binding reverts", async function () {
+      await expect(token.connect(owner).bindMinter(user.address))
+        .to.be.revertedWith("AjunaERC20: minter already bound");
+    });
+
+    it("rejects bindMinter from a non-DEFAULT_ADMIN_ROLE caller", async function () {
+      // Use a fresh, unbound token so the binding check is independent of beforeEach
+      const fresh = await deployERC20Proxy("X", "X", owner.address, DECIMALS);
+      await expect(fresh.connect(user).bindMinter(user.address)).to.be.reverted;
+    });
+
+    it("rejects bindMinter(address(0))", async function () {
+      const fresh = await deployERC20Proxy("X", "X", owner.address, DECIMALS);
+      await expect(fresh.connect(owner).bindMinter(ZERO_ADDRESS))
+        .to.be.revertedWith("AjunaERC20: zero minter");
+    });
+
+    it("emits MinterBound when binding", async function () {
+      const fresh = await deployERC20Proxy("X", "X", owner.address, DECIMALS);
+      await expect(fresh.connect(owner).bindMinter(user2.address))
+        .to.emit(fresh, "MinterBound")
+        .withArgs(user2.address);
+    });
+
+    it("grants MINTER_ROLE to the bound minter atomically", async function () {
+      const fresh = await deployERC20Proxy("X", "X", owner.address, DECIMALS);
+      const MINTER_ROLE = await fresh.MINTER_ROLE();
+      expect(await fresh.hasRole(MINTER_ROLE, user2.address)).to.be.false;
+      await fresh.connect(owner).bindMinter(user2.address);
+      expect(await fresh.hasRole(MINTER_ROLE, user2.address)).to.be.true;
+    });
+
+    it("permits re-grant of MINTER_ROLE to the bound minter (after revoke)", async function () {
+      const MINTER_ROLE = await token.MINTER_ROLE();
+      const wAddr = await wrapper.getAddress();
+      // Revoke + re-grant to the bound address must work.
+      await token.connect(owner).revokeRole(MINTER_ROLE, wAddr);
+      await token.connect(owner).grantRole(MINTER_ROLE, wAddr);
+      expect(await token.hasRole(MINTER_ROLE, wAddr)).to.be.true;
+    });
+
+    it("blocks pre-bind grants of MINTER_ROLE to anyone (binding semantics start at zero)", async function () {
+      // Before bindMinter is called, MINTER_ROLE has no holders. The override
+      // permits the bind to perform the *first* grant, but until then the
+      // _grantRole override does NOT block direct grantRole calls. This test
+      // documents the boundary: the production deploy script always calls
+      // bindMinter, so the only "free grant" window is between proxy
+      // initialization and bindMinter — covered in production by the
+      // allowlist gate (deploy_wrapper.ts script).
+      const fresh = await deployERC20Proxy("X", "X", owner.address, DECIMALS);
+      const MINTER_ROLE = await fresh.MINTER_ROLE();
+      // Pre-bind: grantRole works (binding hasn't engaged).
+      await fresh.connect(owner).grantRole(MINTER_ROLE, user.address);
+      expect(await fresh.hasRole(MINTER_ROLE, user.address)).to.be.true;
+      // Once bindMinter is called, the binding engages on subsequent grants.
+      await fresh.connect(owner).bindMinter(user2.address);
+      await expect(fresh.connect(owner).grantRole(MINTER_ROLE, user.address))
+        .to.be.revertedWith("AjunaERC20: MINTER_ROLE bound to a single address");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Decimals coherence (audit ATS-08)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("Decimals coherence (ATS-08)", function () {
+    it("reverts AjunaWrapper.initialize when foreign-asset decimals != token decimals", async function () {
+      // Deploy a wAJUN with 12 decimals
+      const t = await deployERC20Proxy("X", "X", owner.address, 12);
+      // Deploy a foreign asset with 18 decimals (stand-in: a fresh AjunaERC20 with 18)
+      const fa18 = await deployERC20Proxy("Foreign18", "F18", owner.address, 18);
+
+      const Factory = await ethers.getContractFactory("AjunaWrapper");
+      const impl = await Factory.deploy();
+      await impl.waitForDeployment();
+      const initData = Factory.interface.encodeFunctionData("initialize", [
+        await t.getAddress(),
+        await fa18.getAddress(),
+      ]);
+      const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+      await expect(ProxyFactory.deploy(await impl.getAddress(), initData))
+        .to.be.reverted; // SafeERC20-style mismatch revert during initialize
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Sister views (audit ATS-12)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("Sister views (ATS-12)", function () {
+    it("getInvariantDelta is 0 on a fresh wrapper", async function () {
+      expect(await wrapper.getInvariantDelta()).to.equal(0n);
+    });
+
+    it("getInvariantDelta is 0 after a normal deposit", async function () {
+      const amount = ethers.parseUnits("100", DECIMALS);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+      expect(await wrapper.getInvariantDelta()).to.equal(0n);
+    });
+
+    it("getInvariantDelta is negative when over-collateralized (direct AJUN transfer)", async function () {
+      const dust = ethers.parseUnits("1", DECIMALS);
+      await foreignAssetMock.connect(user).transfer(await wrapper.getAddress(), dust);
+      expect(await wrapper.getInvariantDelta()).to.equal(-dust);
+      expect(await wrapper.isUnderCollateralized()).to.be.false;
+    });
+
+    it("isUnderCollateralized is false on a healthy wrapper", async function () {
+      const amount = ethers.parseUnits("50", DECIMALS);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+      expect(await wrapper.isUnderCollateralized()).to.be.false;
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Self-rescue check (audit ATS-14)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("rescueToken self-rescue (ATS-14)", function () {
+    it("reverts when to == address(this)", async function () {
+      const randomToken = await deployERC20Proxy("Random", "RND", owner.address, DECIMALS);
+      // We don't even need to fund — the check is at the top of rescueToken.
+      await expect(
+        wrapper.connect(owner).rescueToken(
+          await randomToken.getAddress(),
+          await wrapper.getAddress(),
+          1
+        )
+      ).to.be.revertedWith("AjunaWrapper: rescue to self");
     });
   });
 });

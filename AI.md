@@ -49,7 +49,7 @@ Deployment and config:
 - `hardhat.config.ts`: Hardhat network configuration for local, testnet, and mainnet.
 
 Testing and simulation:
-- `test/wrapper.test.ts`: comprehensive test suite, currently 91 tests.
+- `test/wrapper.test.ts`: comprehensive test suite, currently 112 tests (105 in `test/wrapper.test.ts` + 7 in `test/audit/`).
 - `scripts/e2e_test.ts`: end-to-end integration script.
 - `scripts/e2e_local.sh`: local automated pipeline.
 - `chopsticks.yml`: Asset Hub fork config for production-like testing.
