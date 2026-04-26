@@ -65,7 +65,7 @@ const configs: Record<string, EnvConfig> = {
    *   1. Start node:        ./scripts/run_local_node.sh
    *   2. Fund account:      npx hardhat run scripts/fund_account.ts --network local
    *   3. Deploy mock FA:    npx hardhat run scripts/deploy_mock_foreign_asset.ts --network local
-   *   4. Deploy contracts:  npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local
+   *   4. Deploy contracts:  FOREIGN_ASSET=0x<mock> npx hardhat run scripts/deploy_wrapper.ts --network local
    *   5. Run E2E:           npx hardhat run scripts/e2e_test.ts --network local
    */
   local: {

@@ -47,7 +47,6 @@ Deployment and config:
 - `scripts/lookup_ajun_asset.ts`: on-chain discovery of AJUN registration, precompile index, and address.
 - `deployments.config.ts`: environment definitions and deterministic precompile address computation.
 - `hardhat.config.ts`: Hardhat network configuration for local, testnet, and mainnet.
-- `ignition/modules/AjunaWrapper.ts`: optional Ignition-based deployment module.
 
 Testing and simulation:
 - `test/wrapper.test.ts`: comprehensive test suite, currently 61 tests.

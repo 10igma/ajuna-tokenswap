@@ -1,7 +1,7 @@
 # Ajuna Token Swap — Security Review
 
 **Date**: 2026-04-26
-**Scope**: All Solidity contracts in `contracts/`, deployment scripts, Ignition module, test suite, and operational configuration.
+**Scope**: All Solidity contracts in `contracts/`, deployment scripts, test suite, and operational configuration.
 **Status**: Supersedes the 2026-02-15 review. All prior findings re-verified against current code.
 
 > **Update (post-review same-day)**: MEDIUM-A and LOW-B identified in §2 of this

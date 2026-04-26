@@ -1,6 +1,5 @@
 import { HardhatUserConfig, vars } from "hardhat/config";
 import "@parity/hardhat-polkadot";
-import "@nomicfoundation/hardhat-ignition-ethers";
 import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@typechain/hardhat";

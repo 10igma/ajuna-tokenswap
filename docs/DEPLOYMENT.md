@@ -151,15 +151,6 @@ WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
   npx hardhat run scripts/e2e_test.ts --network local
 ```
 
-### Option C: Ignition Module
-
-```bash
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local \
-  --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "0x<mock_fa_address>"}}'
-```
-
-> **Note**: `@parity/hardhat-polkadot` overrides the Ignition deploy task. The plain script (`deploy_wrapper.ts`) is more reliable for automated pipelines.
-
 ---
 
 ## Level 3: Chopsticks (Forked AssetHub)

@@ -84,9 +84,6 @@ ajuna-tokenswap/
 │       └── IERC20Precompile.sol # Foreign Asset interface
 ├── test/
 │   └── wrapper.test.ts          # Comprehensive test suite (61 tests)
-├── ignition/
-│   └── modules/
-│       └── AjunaWrapper.ts      # Deployment module
 ├── scripts/
 │   ├── setup_node.sh            # Build revive-dev-node
 │   ├── run_local_node.sh        # Run local PVM node
@@ -244,8 +241,7 @@ Or step-by-step:
 ```bash
 npx hardhat run scripts/fund_account.ts --network local
 npx hardhat run scripts/deploy_mock_foreign_asset.ts --network local
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local \
-  --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "<MOCK_FA_ADDRESS>"}}'
+FOREIGN_ASSET=<MOCK_FA_ADDRESS> npx hardhat run scripts/deploy_wrapper.ts --network local
 WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
   npx hardhat run scripts/e2e_test.ts --network local
 ```
@@ -264,8 +260,7 @@ npx @acala-network/chopsticks --config=chopsticks.yml
 # 3. Fund your test account via dev_setStorage (see chopsticks.yml for examples)
 
 # 4. Deploy and test
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local \
-  --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "<REAL_PRECOMPILE_ADDRESS>"}}'
+FOREIGN_ASSET=<REAL_PRECOMPILE_ADDRESS> npx hardhat run scripts/deploy_wrapper.ts --network local
 ```
 
 #### Level 4: Testnet Deployment
@@ -326,7 +321,7 @@ A guided, wallet-connected dApp for end users to wrap and unwrap AJUN tokens.
 
 1. **Deploy the contracts** (if not already deployed):
    ```bash
-   npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local
+   ./scripts/e2e_local.sh
    ```
 2. **Start the UI server**:
    ```bash
@@ -373,7 +368,7 @@ To add the Polkadot AssetHub network to MetaMask:
 For interactive developer testing on a local node (uses hardcoded test accounts):
 
 1. **Start the local node**: `./scripts/run_local_node.sh`
-2. **Deploy contracts**: `npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local`
+2. **Deploy contracts**: `./scripts/e2e_local.sh` (or step-by-step: `deploy_mock_foreign_asset.ts` + `deploy_wrapper.ts`)
 3. **Start the test UI server**: `./scripts/serve_ui.sh`
 4. **Open in browser**: http://localhost:8000/test-ui.html
 5. Paste the wrapper, ERC20, and foreign asset addresses, then click "Load Contracts"
@@ -464,7 +459,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete production deploym
 ### Manual
 
 ```bash
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network polkadotTestnet
+FOREIGN_ASSET=0x... npx hardhat run scripts/deploy_wrapper.ts --network polkadotTestnet
 ```
 
 ## Troubleshooting

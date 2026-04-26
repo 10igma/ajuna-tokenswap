@@ -491,20 +491,14 @@ ajuna-tokenswap/
 │   ├── setup_node.sh                   # Build revive-dev-node from source
 │   ├── run_local_node.sh               # Start local node + eth-rpc
 │   ├── deploy_mock_foreign_asset.ts    # Deploy mock FA for local testing
-│   ├── deploy_wrapper.ts              # Deploy ERC20 + Wrapper (UUPS proxies)
-│   ├── deploy_testnet.sh              # Deploy to Polkadot Hub TestNet
-│   ├── e2e_test.ts                    # E2E integration test script
-│   ├── e2e_local.sh                   # Full automated E2E pipeline
-│   ├── fund_account.ts                # Fund a test account from Alith
-│   ├── lookup_ajun_asset.ts           # Query AJUN asset on live chain
-│   ├── check_chain_id.ts             # Verify chain ID
-│   ├── check_dev_accounts.ts          # List dev account balances
-│   └── serve_ui.sh                    # Serve UIs on localhost:8000
-│
-├── ignition/
-│   ├── modules/
-│   │   └── AjunaWrapper.ts            # Hardhat Ignition deployment module
-│   └── parameters.json                # Default parameters
+│   ├── deploy_wrapper.ts               # Deploy ERC20 + Wrapper (UUPS proxies)
+│   ├── deploy_testnet.sh               # Deploy to Polkadot Hub TestNet
+│   ├── deploy_production.sh            # Deploy to Polkadot Asset Hub mainnet
+│   ├── e2e_test.ts                     # E2E integration test script
+│   ├── e2e_local.sh                    # Full automated E2E pipeline
+│   ├── fund_account.ts                 # Fund a test account from Alith
+│   ├── lookup_ajun_asset.ts            # Query AJUN asset on live chain
+│   └── serve_ui.sh                     # Serve UIs on localhost:8000
 │
 ├── docs/                              # Documentation
 │   ├── README.md                      # Documentation index
