@@ -304,19 +304,121 @@ Phase 9A — no separate renunciation needed.)
 - [ ] Update operational runbooks with proxy addresses, tx hashes, and multisig ownership status.
 - [ ] Store final addresses somewhere durable.
 
+## Phase 10B: Install Timelock (BEFORE Phase 11)
+
+The wrapper has no timelock at deploy time — that's deliberate. While
+the allowlist gate is on (Phases 4–10), only the deployer + designated
+testers can interact, so a fast multisig owner is the right choice for
+iterating on issues. **Before flipping the gate off** (Phase 11), the
+multisig must hand ownership to a `TimelockController` so any
+subsequent admin action (especially `upgradeToAndCall`) is delayed,
+giving public users an exit window. See `audit/REPORT.md` recommendation
+INFO-B and `docs/SECURITY.md` "Production Hardening Checklist".
+
+### 10B.A — Deploy the timelock
+
+- [ ] Decide on the timelock parameters:
+  - **Min delay** (typical: 86400 = 24h; conservative: 172800 = 48h).
+  - **Proposers** — the multisig (single address; can be a list).
+    OZ grants `CANCELLER_ROLE` to each proposer automatically.
+  - **Executors** — `address(0)` for "anyone can execute after delay"
+    (standard public pattern), or a restricted list.
+  - **Admin** — `address(0)` for an immutable timelock (cannot
+    reconfigure delay or roles). Recommended for production.
+
+- [ ] Deploy from a **separate** EOA (not the deployer, not the
+      multisig — for clean separation):
+
+```bash
+PROPOSERS=0x<multisig> \
+TIMELOCK_DELAY_SECS=86400 \
+EXECUTORS=0x0000000000000000000000000000000000000000 \
+ADMIN=0x0000000000000000000000000000000000000000 \
+  npx hardhat run scripts/deploy_timelock.ts --network polkadotMainnet
+```
+
+- [ ] Record the deployed `TIMELOCK_ADDRESS`.
+
+### 10B.B — Hand wrapper ownership to the timelock
+
+- [ ] Multisig calls `wrapper.transferOwnership(timelock)` (single tx).
+
+- [ ] Multisig schedules the timelock to call `wrapper.acceptOwnership()`:
+
+```text
+timelock.schedule(
+  target:        wrapper,
+  value:         0,
+  data:          encodeCall(wrapper.acceptOwnership, ()),
+  predecessor:   0x0,
+  salt:          keccak256("acceptOwnership-wrapper-2026-MM-DD"),
+  delay:         86400
+)
+```
+
+- [ ] Wait the configured delay (24h for production).
+
+- [ ] Anyone executes the scheduled call (open executor pattern):
+
+```text
+timelock.execute(target, 0, calldata, predecessor, salt)
+```
+
+- [ ] Verify `wrapper.owner() == <timelock_address>`.
+
+### 10B.C — Hand ERC20 admin role to the timelock
+
+- [ ] Multisig calls `token.beginDefaultAdminTransfer(timelock)`.
+
+- [ ] Wait the ERC20's configured admin delay (production: 5 days).
+
+- [ ] Multisig schedules the timelock to call
+      `token.acceptDefaultAdminTransfer()`:
+
+```text
+timelock.schedule(
+  target:        token,
+  value:         0,
+  data:          encodeCall(token.acceptDefaultAdminTransfer, ()),
+  predecessor:   0x0,
+  salt:          keccak256("acceptAdmin-token-2026-MM-DD"),
+  delay:         86400
+)
+```
+
+- [ ] Wait the timelock delay (24h). Anyone executes.
+
+- [ ] Verify `token.defaultAdmin() == <timelock_address>`.
+
+- [ ] **Cross-check**: `wrapper.owner() == token.defaultAdmin() == timelock` (per audit ATS-04).
+
+> **Total wall-clock for Phase 10B**: ~5–6 days for the ERC20 admin
+> transfer + however long you set the timelock's own delay. Plan
+> announcements accordingly.
+
 ## Phase 11: Open To Public
 
-Only execute once all prior phases are green and the multisig is comfortable.
+Only execute once all prior phases are green AND the timelock is in
+place AND the multisig is comfortable.
 
-- [ ] Multisig calls `wrapper.setAllowlistEnabled(false)` on production.
+- [ ] **PREREQUISITE**: verify `wrapper.owner() == <timelock_address>`.
+      If still the multisig, **stop** — go back to Phase 10B. Without
+      the timelock, the multisig has unilateral instant-upgrade power
+      over public user funds.
+- [ ] **PREREQUISITE**: verify `token.defaultAdmin() == <timelock_address>`.
+- [ ] Multisig schedules + executes `wrapper.setAllowlistEnabled(false)`
+      via the timelock.
 - [ ] Confirm event `AllowlistEnabledUpdated(false)` emitted in the tx receipt.
 - [ ] Confirm an external (non-allowlisted) test account can now `deposit`.
 - [ ] Announce.
 
 If anything goes wrong post-launch, multisig can re-gate immediately
-with `setAllowlistEnabled(true)`. This is reversible and strictly more
-surgical than `pause()` — useful for blocking individual addresses
-later via `setAllowlist(target, false)` without freezing legitimate users.
+with `setAllowlistEnabled(true)` — but now via the timelock with the
+configured delay (typically 24h). For per-account surgical blocks
+(suspicious address), use `setAllowlist(target, false)` — also via the
+timelock. The pause circuit breaker (`pause()`) likewise goes through
+the timelock; for genuinely instant emergency response, the design
+intention is the allowlist's per-account block, not pause.
 
 ## Phase 12: Final Sign-Off
 

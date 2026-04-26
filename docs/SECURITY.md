@@ -524,7 +524,14 @@ Before going live, ensure:
 - [ ] All roles transferred to a **multisig** (3-of-5 or 4-of-7 recommended)
 - [ ] Deployer has **renounced** all privileged roles
 - [ ] **Existential deposit** sent to Wrapper proxy (1–2 DOT)
-- [ ] **Timelock contract** deployed in front of multisig (recommended: 24–48h delay)
+- [ ] **Timelock contract** deployed in front of multisig (recommended: 24–48h delay).
+      The contract is `TimelockController` from OpenZeppelin; the deploy
+      script `scripts/deploy_timelock.ts` is in-repo and ready. The
+      ownership-handover procedure is `docs/PRODUCTION-CHECKLIST.md`
+      Phase 10B. **The timelock is intentionally NOT installed at deploy
+      time** — under the allowlist gate (Phases 4–10), only the team has
+      funds at risk, so a fast multisig owner is correct. Install the
+      timelock before flipping `setAllowlistEnabled(false)` in Phase 11.
 - [ ] **Monitoring** set up for:
   - `Deposited` / `Withdrawn` events (unusual volumes)
   - `Paused` / `Unpaused` events

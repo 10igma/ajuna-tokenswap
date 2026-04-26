@@ -423,7 +423,7 @@ interface IERC20Precompile {
 
 ```
 Level 1: Hardhat In-Memory EVM
-  ├── 112 unit tests (test/wrapper.test.ts)
+  ├── 119 unit tests (test/wrapper.test.ts)
   ├── Mock Foreign Asset (deployed in test setup)
   ├── Proxy deployment helpers (deployERC20Proxy, deployWrapperProxy)
   └── Tests: deployment, deposit, withdraw, access, pause, rescue, UUPS
@@ -494,7 +494,7 @@ ajuna-tokenswap/
 │       └── IERC20Precompile.sol        # Foreign Asset ERC20 interface
 │
 ├── test/
-│   └── wrapper.test.ts                 # 112 unit tests (Hardhat in-memory)
+│   └── wrapper.test.ts                 # 119 unit tests (Hardhat in-memory)
 │
 ├── scripts/
 │   ├── setup_node.sh                   # Build revive-dev-node from source

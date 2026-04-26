@@ -85,7 +85,7 @@ ajuna-tokenswap/
 │   └── interfaces/
 │       └── IERC20Precompile.sol # Foreign Asset interface
 ├── test/
-│   └── wrapper.test.ts          # Comprehensive test suite (112 tests)
+│   └── wrapper.test.ts          # Comprehensive test suite (119 tests)
 ├── scripts/
 │   ├── setup_node.sh            # Build revive-dev-node
 │   ├── run_local_node.sh        # Run local PVM node
@@ -172,7 +172,7 @@ Expected output:
       ✔ should preserve balances after AjunaWrapper upgrade
       ✔ should prevent calling initialize on implementation directly
 
-  112 passing
+  119 passing
 ```
 
 ### Test Coverage
@@ -196,7 +196,7 @@ The project uses a layered testing approach because the local dev node and produ
 
 | Level | Environment | Foreign Asset | Precompile | Best For |
 |-------|-------------|--------------|------------|----------|
-| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 112 tests |
+| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 119 tests |
 | **2. PVM Integration** | Local `revive-dev-node` | Mock ERC20 | No | PVM bytecode compat, gas |
 | **3. Chopsticks Fork** | Forked AssetHub state | **Real** | **Yes** | Production-like testing |
 | **4. Testnet** | Polkadot Hub TestNet | **Real** (via XCM) | **Yes** | Full production path |

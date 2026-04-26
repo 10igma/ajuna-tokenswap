@@ -12,7 +12,7 @@ Two parallel jobs, both must pass for the PR to be mergeable.
 | Step | Command | Why |
 |------|---------|-----|
 | Compile | `npx hardhat compile` | Catches Solidity errors / dependency drift. |
-| Test | `npx hardhat test` | Full Hardhat suite (currently 112). The audit-PoC tests in [`test/audit/`](../test/audit/) are part of this run — regressing any audit fix surfaces here. |
+| Test | `npx hardhat test` | Full Hardhat suite (currently 119). The audit-PoC tests in [`test/audit/`](../test/audit/) are part of this run — regressing any audit fix surfaces here. |
 | OZ validate | `npx --yes @openzeppelin/upgrades-core validate artifacts/build-info` | Catches regressions of audit ATS-09 (the inline-reentrancy-guard switch). Currently passes 4 / 4 upgradeable contracts. |
 
 ### Job 2 — `Slither static analysis`

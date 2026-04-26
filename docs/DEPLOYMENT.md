@@ -107,7 +107,7 @@ No deployment needed — Hardhat's in-memory EVM handles everything:
 npx hardhat test
 ```
 
-All 112 tests (105 in `wrapper.test.ts` + 7 audit PoC regression tests in `test/audit/`) run against mock contracts, including UUPS proxy deployment patterns.
+All 119 tests (112 in `wrapper.test.ts` + 7 audit PoC regression tests in `test/audit/`) run against mock contracts, including UUPS proxy deployment patterns.
 
 ---
 

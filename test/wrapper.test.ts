@@ -1525,4 +1525,263 @@ describe("AjunaWrapper System", function () {
       ).to.be.revertedWith("AjunaWrapper: rescue to self");
     });
   });
+
+  // ═══════════════════════════════════════════════════════════
+  //  TimelockController integration (audit INFO-B / Phase 10B)
+  //
+  //  Verifies the deferred-timelock model documented in
+  //  docs/PRODUCTION-CHECKLIST.md Phase 10B: post-launch, the multisig
+  //  hands wrapper.owner() over to a TimelockController so every
+  //  upgradeToAndCall (and every other owner action) goes through a
+  //  configurable delay. The team's planned default is 24h. For tests
+  //  we use 1 second + evm_increaseTime to keep the suite fast.
+  //
+  //  These tests are inventory-only — the production deploy in
+  //  scripts/deploy_timelock.ts is invoked manually when the team is
+  //  ready to flip the allowlist gate (Phase 11). Until then, the
+  //  multisig has direct (fast) control under the allowlist gate.
+  // ═══════════════════════════════════════════════════════════
+
+  describe("TimelockController integration (Phase 10B)", function () {
+    const ZERO_ADDR = ethers.ZeroAddress;
+    const SHORT_DELAY = 1; // seconds — keeps tests fast; production uses 86400
+
+    let timelock: any;
+
+    async function deployTimelockOwnedSystem() {
+      // Deploy timelock with the deployer (owner in test) as the only proposer.
+      // address(0) executor = "anyone can execute after delay" (production pattern).
+      // address(0) admin = immutable timelock.
+      const TimelockFactory = await ethers.getContractFactory("TimelockController");
+      const t = await TimelockFactory.deploy(
+        SHORT_DELAY,
+        [owner.address], // proposers (also auto-granted CANCELLER)
+        [ZERO_ADDR],     // executors — anyone can execute
+        ZERO_ADDR,       // admin — none, timelock is immutable
+      );
+      await t.waitForDeployment();
+
+      // Hand wrapper ownership to the timelock via Ownable2Step:
+      //   1. owner.transferOwnership(timelock)
+      //   2. timelock.execute(...) calling wrapper.acceptOwnership()
+      await wrapper.connect(owner).transferOwnership(await t.getAddress());
+
+      const wrapperIface = wrapper.interface as any;
+      const acceptCalldata = wrapperIface.encodeFunctionData("acceptOwnership", []);
+      const salt = ethers.id("test-accept-ownership");
+
+      // Schedule the acceptOwnership call via the timelock.
+      await (t as any).connect(owner).schedule(
+        await wrapper.getAddress(),
+        0,
+        acceptCalldata,
+        ethers.ZeroHash, // no predecessor
+        salt,
+        SHORT_DELAY,
+      );
+
+      // Advance time past the delay.
+      await ethers.provider.send("evm_increaseTime", [SHORT_DELAY + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      // Anyone can execute (open executor).
+      await (t as any).connect(user).execute(
+        await wrapper.getAddress(),
+        0,
+        acceptCalldata,
+        ethers.ZeroHash,
+        salt,
+      );
+
+      return t;
+    }
+
+    beforeEach(async function () {
+      timelock = await deployTimelockOwnedSystem();
+    });
+
+    it("should make the timelock the wrapper's owner after handover", async function () {
+      expect(await wrapper.owner()).to.equal(await timelock.getAddress());
+    });
+
+    it("should reject direct pause from the previous owner once the timelock owns the wrapper", async function () {
+      await expect(wrapper.connect(owner).pause()).to.be.reverted;
+      // Even though `owner` is a PROPOSER on the timelock, they cannot
+      // bypass the delay by calling the wrapper directly.
+    });
+
+    it("should allow pause via the timelock after the configured delay", async function () {
+      const wrapperIface = wrapper.interface as any;
+      const pauseCalldata = wrapperIface.encodeFunctionData("pause", []);
+      const salt = ethers.id("test-pause");
+
+      // PROPOSER schedules the pause.
+      await (timelock as any).connect(owner).schedule(
+        await wrapper.getAddress(),
+        0,
+        pauseCalldata,
+        ethers.ZeroHash,
+        salt,
+        SHORT_DELAY,
+      );
+
+      // Advance past delay; execute succeeds.
+      // (The pre-delay-execute revert is part of OZ TimelockController's
+      // own invariants, well-tested upstream — verifying it again here
+      // would race with hardhat's auto-mined block timestamps when
+      // SHORT_DELAY is set to 1s for fast tests.)
+      await ethers.provider.send("evm_increaseTime", [SHORT_DELAY + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await (timelock as any).connect(owner).execute(
+        await wrapper.getAddress(),
+        0,
+        pauseCalldata,
+        ethers.ZeroHash,
+        salt,
+      );
+
+      expect(await wrapper.paused()).to.be.true;
+    });
+
+    it("should let a CANCELLER abort a scheduled action before execution", async function () {
+      const wrapperIface = wrapper.interface as any;
+      const pauseCalldata = wrapperIface.encodeFunctionData("pause", []);
+      const salt = ethers.id("test-cancel");
+
+      await (timelock as any).connect(owner).schedule(
+        await wrapper.getAddress(),
+        0,
+        pauseCalldata,
+        ethers.ZeroHash,
+        salt,
+        SHORT_DELAY,
+      );
+
+      // Compute the operation id and cancel.
+      const opId = await (timelock as any).hashOperation(
+        await wrapper.getAddress(),
+        0,
+        pauseCalldata,
+        ethers.ZeroHash,
+        salt,
+      );
+      await (timelock as any).connect(owner).cancel(opId);
+
+      // Even after the delay, execute reverts because the op was cancelled.
+      await ethers.provider.send("evm_increaseTime", [SHORT_DELAY + 1]);
+      await ethers.provider.send("evm_mine", []);
+      await expect(
+        (timelock as any).connect(owner).execute(
+          await wrapper.getAddress(),
+          0,
+          pauseCalldata,
+          ethers.ZeroHash,
+          salt,
+        )
+      ).to.be.reverted;
+
+      // Wrapper still unpaused.
+      expect(await wrapper.paused()).to.be.false;
+    });
+
+    it("should gate upgradeToAndCall through the timelock (the audit INFO-B threat)", async function () {
+      // Deploy a new V2 implementation.
+      const V2Factory = await ethers.getContractFactory("AjunaWrapperV2");
+      const v2Impl = await V2Factory.deploy();
+      await v2Impl.waitForDeployment();
+
+      // Direct upgrade by the previous owner reverts (they're no longer owner).
+      await expect(
+        (wrapper as any).connect(owner).upgradeToAndCall(await v2Impl.getAddress(), "0x")
+      ).to.be.reverted;
+
+      // Schedule the upgrade via the timelock with a no-op migration call to
+      // exercise the upgradeToAndCall path. We use empty calldata for the
+      // migration — V2's reinitializer is owner-only and is exercised in
+      // the existing UUPS test group.
+      const wrapperIface = wrapper.interface as any;
+      const upgradeCalldata = wrapperIface.encodeFunctionData("upgradeToAndCall", [
+        await v2Impl.getAddress(),
+        "0x",
+      ]);
+      const salt = ethers.id("test-upgrade");
+
+      await (timelock as any).connect(owner).schedule(
+        await wrapper.getAddress(),
+        0,
+        upgradeCalldata,
+        ethers.ZeroHash,
+        salt,
+        SHORT_DELAY,
+      );
+
+      await ethers.provider.send("evm_increaseTime", [SHORT_DELAY + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      await (timelock as any).connect(owner).execute(
+        await wrapper.getAddress(),
+        0,
+        upgradeCalldata,
+        ethers.ZeroHash,
+        salt,
+      );
+
+      // Verify the upgrade landed: V2 exposes `version`.
+      const wrapperV2 = V2Factory.attach(await wrapper.getAddress());
+      // V2 will read 0 because we didn't run migrateToV2 — that's fine,
+      // we only needed to verify the upgrade went through the timelock.
+      expect(await (wrapperV2 as any).version()).to.equal(0);
+      expect(await wrapper.owner()).to.equal(await timelock.getAddress()); // ownership preserved
+    });
+
+    it("should expose the configured min delay and roles", async function () {
+      const PROPOSER_ROLE = await timelock.PROPOSER_ROLE();
+      const EXECUTOR_ROLE = await timelock.EXECUTOR_ROLE();
+      const CANCELLER_ROLE = await timelock.CANCELLER_ROLE();
+
+      expect(await timelock.getMinDelay()).to.equal(SHORT_DELAY);
+      expect(await timelock.hasRole(PROPOSER_ROLE, owner.address)).to.be.true;
+      // Owner gets CANCELLER for free (OZ grants both together).
+      expect(await timelock.hasRole(CANCELLER_ROLE, owner.address)).to.be.true;
+      // address(0) executor → "open role" — anyone can execute.
+      expect(await timelock.hasRole(EXECUTOR_ROLE, ZERO_ADDR)).to.be.true;
+    });
+
+    it("should leave the wrapper non-bricked even if the timelock is misconfigured (renounceOwnership still reverts)", async function () {
+      // The wrapper's renounceOwnership is hard-blocked. Even if a
+      // misconfigured timelock somehow scheduled a renounce, it would
+      // revert at execution time, preserving the safety property from
+      // REVIEW_v1 LOW-B.
+      const wrapperIface = wrapper.interface as any;
+      const renounceCalldata = wrapperIface.encodeFunctionData("renounceOwnership", []);
+      const salt = ethers.id("test-renounce-blocked");
+
+      await (timelock as any).connect(owner).schedule(
+        await wrapper.getAddress(),
+        0,
+        renounceCalldata,
+        ethers.ZeroHash,
+        salt,
+        SHORT_DELAY,
+      );
+
+      await ethers.provider.send("evm_increaseTime", [SHORT_DELAY + 1]);
+      await ethers.provider.send("evm_mine", []);
+
+      // Execute reverts because wrapper.renounceOwnership() reverts.
+      await expect(
+        (timelock as any).connect(owner).execute(
+          await wrapper.getAddress(),
+          0,
+          renounceCalldata,
+          ethers.ZeroHash,
+          salt,
+        )
+      ).to.be.reverted;
+
+      // Owner is still the timelock.
+      expect(await wrapper.owner()).to.equal(await timelock.getAddress());
+    });
+  });
 });
