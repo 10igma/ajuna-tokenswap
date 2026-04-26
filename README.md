@@ -12,24 +12,24 @@ This project implements a treasury-based token wrapper that:
 - Includes a pausable circuit breaker, token rescue, and upgradeable foreign asset address
 - **UUPS proxy upgradeability** — both contracts can be upgraded without migrating state
 
-## ⚠️ Production Blocker — Foreign Assets ERC20 Precompile
+## ✅ Foreign Assets ERC20 Precompile — Ready
 
-> **Status: Blocked on upstream PR — [paritytech/polkadot-sdk#10869](https://github.com/paritytech/polkadot-sdk/pull/10869)**
+> **Status: Resolved — [paritytech/polkadot-sdk#10869](https://github.com/paritytech/polkadot-sdk/pull/10869) merged and deployed**
 
-The Polkadot AssetHub runtime currently does **not** expose an ERC20 precompile for **Foreign Assets** (`pallet_assets::Instance2`). Only TrustBacked assets (prefix `0x0120`) and Pool assets (prefix `0x0320`) have ERC20 precompiles wired up.
+The Polkadot AssetHub runtime now exposes ERC20 precompiles for **Foreign Assets** via the `ForeignAssetIdExtractor`. Each foreign asset (keyed by `xcm::v5::Location`) is assigned a sequential `u32` index, and its ERC20 precompile is accessible at a deterministic address with prefix `0x0220`.
 
-AJUN is registered on AssetHub as a Foreign Asset (keyed by `xcm::v5::Location`), but the existing `InlineAssetIdExtractor` only handles `u32` asset IDs — it cannot encode a variable-length `Location` into 4 bytes.
+AJUN is registered on AssetHub as a Foreign Asset at `Location { parents: 1, interior: X1(Parachain(2051)) }`.
 
-**PR [#10869](https://github.com/paritytech/polkadot-sdk/pull/10869)** adds a `ForeignAssetIdExtractor` that creates a `Location → u32` index mapping, enabling:
-```rust
-ERC20<Self, ForeignAssetIdConfig<0x220>, ForeignAssetsInstance>
+**To discover the precompile address:**
+```bash
+npx ts-node scripts/lookup_ajun_asset.ts
 ```
 
-**Impact on this project:**
-- All Solidity contracts are complete and tested against a mock ERC20 (which matches the precompile's IERC20 interface exactly)
-- **No code changes required** once the upstream PR is merged and deployed to AssetHub
-- The `IERC20Precompile` address will become a deterministic precompile address instead of a deployed mock contract
-- Tracked in: [#1](https://github.com/darkfriend77/ajuna-tokenswap/issues/1)
+This queries the `AssetsPrecompiles` pallet storage:
+- `foreignAssetIdToAssetIndex(Location)` → `u32` index
+- Precompile address = `computePrecompileAddress(index, 0x0220)`
+
+**No Solidity code changes were required** — the contracts were designed to work with any ERC20-compatible address, and the precompile implements the same `IERC20` interface as the mock contracts used in testing.
 
 ## Architecture
 
@@ -83,14 +83,12 @@ ajuna-tokenswap/
 │   └── interfaces/
 │       └── IERC20Precompile.sol # Foreign Asset interface
 ├── test/
-│   └── wrapper.test.ts          # Comprehensive test suite (60 tests)
-├── ignition/
-│   └── modules/
-│       └── AjunaWrapper.ts      # Deployment module
+│   └── wrapper.test.ts          # Comprehensive test suite (81 tests)
 ├── scripts/
 │   ├── setup_node.sh            # Build revive-dev-node
 │   ├── run_local_node.sh        # Run local PVM node
 │   ├── deploy_testnet.sh        # Deploy to testnet
+│   ├── deploy_production.sh     # Deploy to production (mainnet)
 │   ├── deploy_mock_foreign_asset.ts # Deploy mock FA for local testing
 │   ├── e2e_test.ts              # E2E integration test script
 │   ├── e2e_local.sh             # Full automated E2E pipeline
@@ -107,13 +105,14 @@ ajuna-tokenswap/
 
 ## Configuration
 
-The project is configured in `hardhat.config.ts` with two networks plus the default in-memory network:
+The project is configured in `hardhat.config.ts` with three networks plus the default in-memory network:
 
 | Network | Chain ID | Purpose |
 |---------|----------|---------|
 | `hardhat` (default) | — | In-memory testing |
 | `local` | 420420420 | Local `revive-dev-node` |
 | `polkadotTestnet` | 420420417 | Polkadot Hub TestNet |
+| `polkadotMainnet` | 420420420 | Polkadot AssetHub Production |
 
 ## Testing
 
@@ -159,10 +158,6 @@ Expected output:
       ✔ should rescue accidentally sent tokens
       ✔ should NOT allow rescuing the locked foreign asset
       ✔ should only allow owner to rescue
-    Foreign Asset Update
-      ✔ should allow owner to update foreign asset address
-      ✔ should reject zero address
-      ✔ should reject non-owner
     Multi-User
       ✔ should handle interleaved wrap/unwrap from two users
     UUPS Upgradeability
@@ -175,7 +170,7 @@ Expected output:
       ✔ should preserve balances after AjunaWrapper upgrade
       ✔ should prevent calling initialize on implementation directly
 
-  60 passing
+  81 passing
 ```
 
 ### Test Coverage
@@ -199,10 +194,11 @@ The project uses a layered testing approach because the local dev node and produ
 
 | Level | Environment | Foreign Asset | Precompile | Best For |
 |-------|-------------|--------------|------------|----------|
-| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 60 tests |
+| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 81 tests |
 | **2. PVM Integration** | Local `revive-dev-node` | Mock ERC20 | No | PVM bytecode compat, gas |
 | **3. Chopsticks Fork** | Forked AssetHub state | **Real** | **Yes** | Production-like testing |
 | **4. Testnet** | Polkadot Hub TestNet | **Real** (via XCM) | **Yes** | Full production path |
+| **5. Production** | Polkadot AssetHub | **Real** (via XCM) | **Yes** | Live mainnet |
 
 #### Why the levels differ
 
@@ -221,7 +217,7 @@ Address (20 bytes) = [assetId (4B BE)] [zeros (12B)] [prefix (2B BE)] [0x0000]
 ```
 
 - Native assets prefix: `0x0120`
-- Foreign assets prefix: `0x0220` (verify against runtime)
+- Foreign assets prefix: `0x0220` (confirmed — `ForeignAssetIdExtractor`)
 - Example: Asset ID 1984 (USDT) → `0x000007C000000000000000000000000001200000`
 
 Use the helper to compute any address:
@@ -245,8 +241,7 @@ Or step-by-step:
 ```bash
 npx hardhat run scripts/fund_account.ts --network local
 npx hardhat run scripts/deploy_mock_foreign_asset.ts --network local
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local \
-  --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "<MOCK_FA_ADDRESS>"}}'
+FOREIGN_ASSET=<MOCK_FA_ADDRESS> npx hardhat run scripts/deploy_wrapper.ts --network local
 WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
   npx hardhat run scripts/e2e_test.ts --network local
 ```
@@ -265,8 +260,7 @@ npx @acala-network/chopsticks --config=chopsticks.yml
 # 3. Fund your test account via dev_setStorage (see chopsticks.yml for examples)
 
 # 4. Deploy and test
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local \
-  --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "<REAL_PRECOMPILE_ADDRESS>"}}'
+FOREIGN_ASSET=<REAL_PRECOMPILE_ADDRESS> npx hardhat run scripts/deploy_wrapper.ts --network local
 ```
 
 #### Level 4: Testnet Deployment
@@ -288,14 +282,30 @@ WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
 Before going to mainnet, verify:
 
 - [ ] **AJUN is registered** as a foreign asset on AssetHub (query with `scripts/lookup_ajun_asset.ts`)
-- [ ] **Asset ID is known** and precompile address computed
+- [ ] **Precompile index assigned** — `assetsPrecompiles.foreignAssetIdToAssetIndex` returns a value
+- [ ] **Precompile address computed** — `computePrecompileAddress(index, 0x0220)`
 - [ ] **Decimals match** — AJUN native has 12 decimals, `AjunaERC20` must use 12
 - [ ] **E2E passed on Chopsticks** with real precompile address
 - [ ] **E2E passed on testnet** with real XCM-transferred AJUN
-- [ ] **Existential Deposit** sent to Wrapper contract (1–2 DOT)
+- [ ] **Existential Deposit** sent to Wrapper contract (0.1 DOT via substrate extrinsic)
+- [ ] **Wrapper seeded** with small AJUN deposit to keep asset account alive
 - [ ] **Admin roles** transferred to multisig and deployer role renounced
 - [ ] **`frontend/app.html` CONFIG** updated with final contract addresses
 - [ ] **dApp tested** via MetaMask on the target network
+
+#### Level 5: Production Deployment
+
+```bash
+# 1. Look up AJUN precompile address
+npx ts-node scripts/lookup_ajun_asset.ts
+
+# 2. Deploy (interactive confirmation)
+FOREIGN_ASSET=0x... ./scripts/deploy_production.sh
+
+# 3. E2E test
+WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
+  npx hardhat run scripts/e2e_test.ts --network polkadotMainnet
+```
 
 ### User-Facing Swap dApp (`frontend/app.html`)
 
@@ -311,7 +321,7 @@ A guided, wallet-connected dApp for end users to wrap and unwrap AJUN tokens.
 
 1. **Deploy the contracts** (if not already deployed):
    ```bash
-   npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local
+   ./scripts/e2e_local.sh
    ```
 2. **Start the UI server**:
    ```bash
@@ -346,19 +356,19 @@ A guided, wallet-connected dApp for end users to wrap and unwrap AJUN tokens.
 
 To add the Polkadot AssetHub network to MetaMask:
 
-| Field | Local Dev Node | Polkadot Hub TestNet |
-|-------|---------------|---------------------|
-| Network Name | AssetHub Local | AssetHub TestNet |
-| RPC URL | `http://127.0.0.1:8545` | `https://services.polkadothub-rpc.com/testnet` |
-| Chain ID | `420420420` | `420420417` |
-| Currency Symbol | `DOT` | `DOT` |
+| Field | Local Dev Node | Polkadot Hub TestNet | Polkadot AssetHub (Production) |
+|-------|---------------|---------------------|-------------------------------|
+| Network Name | AssetHub Local | AssetHub TestNet | Polkadot AssetHub |
+| RPC URL | `http://127.0.0.1:8545` | `https://services.polkadothub-rpc.com/testnet` | `https://polkadot-asset-hub-eth-rpc.polkadot.io` |
+| Chain ID | `420420420` | `420420417` | `420420420` |
+| Currency Symbol | `DOT` | `DOT` | `DOT` |
 
 ### Developer Testing UI (`frontend/test-ui.html`)
 
 For interactive developer testing on a local node (uses hardcoded test accounts):
 
 1. **Start the local node**: `./scripts/run_local_node.sh`
-2. **Deploy contracts**: `npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local`
+2. **Deploy contracts**: `./scripts/e2e_local.sh` (or step-by-step: `deploy_mock_foreign_asset.ts` + `deploy_wrapper.ts`)
 3. **Start the test UI server**: `./scripts/serve_ui.sh`
 4. **Open in browser**: http://localhost:8000/test-ui.html
 5. Paste the wrapper, ERC20, and foreign asset addresses, then click "Load Contracts"
@@ -407,7 +417,7 @@ await wrapper.withdraw(amount);
 - **Reentrancy protection** (`ReentrancyGuard`) on all state-changing user functions
 - **Pausable** circuit breaker — owner can freeze all operations in an emergency
 - **Token rescue** — owner can recover accidentally sent tokens (but not the locked foreign asset)
-- **Mutable foreign asset address** — owner can update the precompile address if it changes with a runtime upgrade
+- **Immutable foreign asset address** — set once at initialization; if the precompile address ever needs to change, deploy a new implementation via UUPS upgrade (prevents an owner key compromise from redirecting the wrapper to a malicious token)
 - **Initializer validation** — rejects zero addresses, prevents re-initialization
 - **Implementation sealed** — `_disableInitializers()` in constructor prevents initializing the implementation directly
 
@@ -438,10 +448,18 @@ Uses `@parity/resolc` to compile Solidity → RISC-V bytecode for `pallet-revive
 2. `npx hardhat vars set PRIVATE_KEY`
 3. `./scripts/deploy_testnet.sh`
 
+### Production (Polkadot AssetHub)
+
+1. Look up the AJUN precompile address: `npx ts-node scripts/lookup_ajun_asset.ts`
+2. `npx hardhat vars set PRIVATE_KEY`
+3. `FOREIGN_ASSET=0x... ./scripts/deploy_production.sh`
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete production deployment guide.
+
 ### Manual
 
 ```bash
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network polkadotTestnet
+FOREIGN_ASSET=0x... npx hardhat run scripts/deploy_wrapper.ts --network polkadotTestnet
 ```
 
 ## Troubleshooting

@@ -5,8 +5,11 @@
 # ║  you the REAL runtime state: registered foreign assets,        ║
 # ║  precompile addresses, account balances, etc.                  ║
 # ║                                                                ║
-# ║  This is the closest you can get to production without         ║
-# ║  deploying to mainnet.                                         ║
+# ║  With the ForeignAssetIdExtractor (polkadot-sdk PR #10869)     ║
+# ║  now live, foreign assets are accessible via ERC20 precompiles ║
+# ║  at prefix 0x0220. The AJUN precompile address can be looked   ║
+# ║  up via:                                                       ║
+# ║    npx ts-node scripts/lookup_ajun_asset.ts                    ║
 # ║                                                                ║
 # ║  Install & run:                                                ║
 # ║    npx @acala-network/chopsticks --config=chopsticks.yml       ║
@@ -58,6 +61,20 @@ port: 8000
 #       ]
 #     }
 #   });
+
+# ── Verifying the AJUN precompile ──────────────────────────────────
+# After starting Chopsticks, verify the precompile works by querying the
+# AssetsPrecompiles pallet (via polkadot.js or wscat on ws://127.0.0.1:8000):
+#
+#   // Look up AJUN's precompile index:
+#   const index = await api.query.assetsPrecompiles.foreignAssetIdToAssetIndex(
+#     { parents: 1, interior: { X1: [{ Parachain: 2051 }] } }
+#   );
+#   console.log("AJUN precompile index:", index.toString());
+#
+#   // Compute address: computePrecompileAddress(index, 0x0220)
+#   // Then deploy with:
+#   //   FOREIGN_ASSET=0x<address> npx hardhat run scripts/deploy_wrapper.ts --network local
 
 # ── Runtime log verbosity ──────────────────────────────────────────
 # Uncomment for verbose logging:

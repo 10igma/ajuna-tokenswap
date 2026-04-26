@@ -13,7 +13,7 @@
  * After running, note the printed address and paste it into
  *   - deployments.config.ts  → local.foreignAssetAddress
  *   - app.html               → CONFIG.FOREIGN_ADDRESS  (or URL param)
- *   - ignition parameters    → foreignAssetAddress
+ *   - FOREIGN_ASSET env var  → for the deploy_wrapper.ts script
  */
 
 import { ethers } from "hardhat";
@@ -80,7 +80,7 @@ async function main() {
   console.log("  Next steps:");
   console.log(`    1. Deploy AjunaWrapper with this foreign asset address:`);
   console.log(
-    `       npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "${mockFAAddress}"}}'`
+    `       FOREIGN_ASSET=${mockFAAddress} npx hardhat run scripts/deploy_wrapper.ts --network local`
   );
   console.log(`    2. Run E2E test:`);
   console.log(

@@ -12,13 +12,14 @@ This document describes the security features, access control model, threat miti
 - [Access Control: AjunaWrapper](#access-control-ajunawrapper)
 - [Reentrancy Protection](#reentrancy-protection)
 - [Pausable Circuit Breaker](#pausable-circuit-breaker)
+- [Initial Allowlist Gate](#initial-allowlist-gate)
 - [Token Rescue](#token-rescue)
 - [The Mint-and-Lock Invariant](#the-mint-and-lock-invariant)
 - [BurnFrom Approval Pattern](#burnfrom-approval-pattern)
 - [Storage Gaps](#storage-gaps)
 - [Implementation Sealing](#implementation-sealing)
 - [Initializer Validation](#initializer-validation)
-- [Mutable Foreign Asset Address](#mutable-foreign-asset-address)
+- [Immutable Foreign Asset Address](#immutable-foreign-asset-address)
 - [Known Risks & Mitigations](#known-risks--mitigations)
 - [Production Hardening Checklist](#production-hardening-checklist)
 - [Audit Scope](#audit-scope)
@@ -125,23 +126,48 @@ AjunaWrapper uses OpenZeppelin's `OwnableUpgradeable` with a single `owner`.
 
 ### Ownership Transfer
 
-`OwnableUpgradeable` supports two-step ownership transfer:
+`AjunaWrapper` inherits `Ownable2StepUpgradeable`, which uses the standard
+**two-step** ownership transfer flow:
 
 ```solidity
-// Step 1: Current owner proposes new owner
+// Step 1: current owner proposes
 wrapper.transferOwnership(newOwner);
+// → emits OwnershipTransferStarted(currentOwner, newOwner)
+// → owner() unchanged; pendingOwner() == newOwner
 
-// Step 2: New owner accepts
-wrapper.acceptOwnership();  // Called from newOwner
+// Step 2: proposed owner accepts (must be msg.sender)
+wrapper.acceptOwnership();
+// → emits OwnershipTransferred(currentOwner, newOwner)
+// → owner() == newOwner; pendingOwner() cleared
 ```
 
-This prevents accidentally transferring ownership to a wrong address.
+The current owner retains full control until `acceptOwnership()` is called by
+the proposed owner. This prevents transfers to wrong, uncontrolled, or
+unaware addresses — a single typo no longer hands the wrapper to the wrong
+party irrecoverably.
+
+Cancelling a pending transfer is done by re-calling `transferOwnership` with
+a different address (or `address(0)` to clear the pending owner without
+re-proposing).
+
+### Renouncing Ownership Is Disabled
+
+`renounceOwnership()` is overridden to always revert. The wrapper relies on a
+live owner for `pause` / `unpause`, `rescueToken`, and UUPS upgrade
+authorization. Renouncing ownership would permanently brick all of these
+levers on a treasury that holds user funds — an unrecoverable state.
+
+If a contract needs to be made permanently non-upgradeable in the future,
+the correct path is a deliberate UUPS upgrade to an implementation whose
+`_authorizeUpgrade` always reverts (see [UPGRADE.md](UPGRADE.md) →
+"Making a Contract Non-Upgradeable"). Pause and rescue capabilities are
+preserved by such an upgrade; renouncing ownership would discard them.
 
 ---
 
 ## Reentrancy Protection
 
-Both `deposit()` and `withdraw()` on AjunaWrapper are protected by `ReentrancyGuardUpgradeable`:
+Both `deposit()` and `withdraw()` on AjunaWrapper are protected by `ReentrancyGuard` (OpenZeppelin's stateless guard from `@openzeppelin/contracts/utils/ReentrancyGuard.sol`, namespaced storage at `openzeppelin.storage.ReentrancyGuard`):
 
 ```solidity
 function deposit(uint256 amount) external nonReentrant whenNotPaused { ... }
@@ -185,6 +211,68 @@ wrapper.unpause();
 - Suspicious activity detected (e.g., unusual large wraps/unwraps)
 - Foreign asset precompile change pending — pause, update address, unpause
 - During a planned contract upgrade
+
+---
+
+## Initial Allowlist Gate
+
+The wrapper ships with an **owner-controlled allowlist** that gates `deposit()` and `withdraw()`. It exists so a fresh production deployment can be smoke-tested under real on-chain conditions before opening to the public.
+
+### State
+
+| Variable | Type | Default after `initialize()` |
+|----------|------|------------------------------|
+| `allowlistEnabled` | `bool` | `true` |
+| `allowlisted` | `mapping(address => bool)` | empty |
+
+When `allowlistEnabled == true`, the `onlyAllowedUser` modifier on `deposit` / `withdraw` requires either:
+1. `msg.sender == owner()` — implicitly always allowed, **regardless** of the mapping or the flag, OR
+2. `allowlisted[msg.sender] == true`.
+
+When `allowlistEnabled == false`, the modifier is a no-op and the wrapper behaves like an open ERC20 wrapper.
+
+### Owner Short-Circuit (Lock-Out Protection)
+
+The current `owner()` is implicitly always allowed to `deposit` / `withdraw`. Concretely:
+
+- The owner can never be locked out, even if the allowlist mapping is empty.
+- Calling `setAllowlist(owner, false)` has no effect on the owner's ability to swap — the modifier short-circuits before reading the mapping.
+- After a multisig handoff, the moment the multisig calls `acceptOwnership()`, it gains immediate `deposit` / `withdraw` access without needing a separate `setAllowlist(multisig, true)` transaction. This is what enables Phase 6B (seeding AJUN dust) to be executed by the multisig directly.
+- The previously-current owner loses this implicit privilege as soon as the new owner accepts; it tracks `owner()`, not a snapshot.
+
+### Owner-Only Functions
+
+| Function | Effect |
+|----------|--------|
+| `setAllowlistEnabled(bool)` | Flip the gate on or off |
+| `setAllowlist(address, bool)` | Add or remove a single account |
+| `setAllowlistBatch(address[], bool)` | Bulk add or bulk remove |
+
+All three revert when called by a non-owner. `setAllowlist` and `setAllowlistBatch` reject `address(0)`.
+
+### Going Public
+
+After Phase 7 verification on production succeeds, opening the wrapper to everyone is a single transaction:
+
+```solidity
+wrapper.setAllowlistEnabled(false);
+```
+
+This is reversible — calling it again with `true` re-restricts immediately, so the gate doubles as a fine-grained "soft pause" for surgical interventions (e.g. blocking a flagged address) without freezing the whole system the way `pause()` does.
+
+### Trust Model
+
+The owner can re-enable the allowlist after going public. This is intentional and is strictly less powerful than capabilities the owner already has (`pause`, `_authorizeUpgrade`). If a stronger guarantee of "permanently permissionless" is desired, deploy a UUPS upgrade to an implementation that hard-codes `allowlistEnabled = false` and removes the setters — but this trades a low-risk operational lever for a UUPS upgrade event, which is the highest-risk operation in the system.
+
+### Scope
+
+The allowlist gate only applies to `deposit` and `withdraw` on the wrapper. It does **not** restrict:
+
+- ERC20 transfers / approvals on the wAJUN token (those follow the standard ERC20 semantics on the AjunaERC20 contract)
+- View functions on either contract
+- Owner-only admin functions (already access-controlled)
+
+A non-allowlisted account can still hold and transfer wAJUN that someone else minted for them — it just cannot mint new wAJUN or unwrap existing wAJUN until either it gets allowlisted or the gate is disabled.
 
 ---
 
@@ -381,7 +469,6 @@ Before going live, ensure:
 - [ ] **Monitoring** set up for:
   - `Deposited` / `Withdrawn` events (unusual volumes)
   - `Paused` / `Unpaused` events
-  - `ForeignAssetUpdated` events
   - `Upgraded` events (proxy implementation change)
   - Invariant drift: `totalSupply != foreignAsset.balanceOf(wrapper)`
 - [ ] **Audit completed** and findings addressed

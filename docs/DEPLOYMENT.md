@@ -2,6 +2,8 @@
 
 This guide covers deploying the Ajuna Token Swap system across all supported environments.
 
+For any production rollout, use `docs/PRODUCTION-CHECKLIST.md` as the execution checklist and treat this document as background and reference.
+
 ---
 
 ## Table of Contents
@@ -63,6 +65,7 @@ console.log(cfg.decimals);             // 12
 | `local` | 420420420 | `http://127.0.0.1:8545` | Mock ERC20 (deployed) |
 | `testnet` | 420420417 | `https://services.polkadothub-rpc.com/testnet` | Real precompile |
 | `chopsticks` | 420420420 | `http://127.0.0.1:8545` | Real precompile (forked) |
+| `production` | 420420420 | `https://polkadot-asset-hub-eth-rpc.polkadot.io` | Real precompile |
 
 ### Hardhat Networks
 
@@ -78,6 +81,11 @@ networks: {
   polkadotTestnet: {
     url: "https://services.polkadothub-rpc.com/testnet",
     chainId: 420420417,
+    accounts: [vars.get("PRIVATE_KEY", "...")]
+  },
+  polkadotMainnet: {
+    url: "https://polkadot-asset-hub-eth-rpc.polkadot.io",
+    chainId: 420420420,
     accounts: [vars.get("PRIVATE_KEY", "...")]
   }
 }
@@ -99,7 +107,7 @@ No deployment needed — Hardhat's in-memory EVM handles everything:
 npx hardhat test
 ```
 
-All 60 tests run against mock contracts, including UUPS proxy deployment patterns.
+All 81 tests run against mock contracts, including UUPS proxy deployment patterns.
 
 ---
 
@@ -143,20 +151,13 @@ WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
   npx hardhat run scripts/e2e_test.ts --network local
 ```
 
-### Option C: Ignition Module
-
-```bash
-npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local \
-  --parameters '{"AjunaWrapperModule": {"foreignAssetAddress": "0x<mock_fa_address>"}}'
-```
-
-> **Note**: `@parity/hardhat-polkadot` overrides the Ignition deploy task. The plain script (`deploy_wrapper.ts`) is more reliable for automated pipelines.
-
 ---
 
 ## Level 3: Chopsticks (Forked AssetHub)
 
 Chopsticks forks a live chain's state, giving you the **real runtime** including registered foreign assets and precompile addresses.
+
+With the `ForeignAssetIdExtractor` now live, the forked state includes the `AssetsPrecompiles` pallet with the `Location → u32` index mapping. AJUN's precompile address is available at prefix `0x0220`.
 
 ### Setup
 
@@ -201,6 +202,9 @@ await api.rpc('dev_setStorage', {
 ### Deploy
 
 ```bash
+# Look up the AJUN precompile address from the forked state
+npx ts-node scripts/lookup_ajun_asset.ts ws://127.0.0.1:8000
+
 # Use the REAL precompile address from the forked state
 FOREIGN_ASSET=0x<real_precompile_address> \
   npx hardhat run scripts/deploy_wrapper.ts --network local
@@ -221,11 +225,16 @@ FOREIGN_ASSET=0x<real_precompile_address> \
 
 ### Look Up the AJUN Asset ID
 
+The `ForeignAssetIdExtractor` assigns a sequential `u32` index to each foreign asset.
+Query the `AssetsPrecompiles` pallet to find AJUN's index and compute its precompile address:
+
 ```bash
 npx ts-node scripts/lookup_ajun_asset.ts wss://westend-asset-hub-rpc.polkadot.io
 ```
 
-This queries the chain for the AJUN foreign asset and returns its local asset ID.
+The script queries:
+- `assetsPrecompiles.foreignAssetIdToAssetIndex(Location)` → `u32` index
+- Computes: `precompile_address = computePrecompileAddress(index, 0x0220)`
 
 ### Compute the Precompile Address
 
@@ -259,6 +268,8 @@ WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
 
 > **WARNING**: Production deployment is irreversible. Follow every step carefully.
 
+Before starting, read `docs/PRODUCTION-CHECKLIST.md` and execute the rollout from that checklist.
+
 ### Pre-Deployment
 
 1. All tests pass on Levels 1–4
@@ -266,16 +277,40 @@ WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
 3. Multisig wallet created for admin operations
 4. Precompile address confirmed against live runtime
 
+### Discover the AJUN Precompile Address
+
+```bash
+npx ts-node scripts/lookup_ajun_asset.ts
+```
+
+This connects to Polkadot AssetHub mainnet and queries the `AssetsPrecompiles` pallet:
+- `foreignAssetIdToAssetIndex({parents:1, interior:{X1:[{Parachain:2051}]}})` → `u32` index
+- Computes the deterministic precompile address at prefix `0x0220`
+- Prints the ready-to-use `FOREIGN_ASSET=0x...` for deployment
+
 ### Deploy
 
 ```bash
+# Option A: Interactive script with confirmation prompt
+FOREIGN_ASSET=0x<precompile_address> ./scripts/deploy_production.sh
+
+# Option B: Direct
 FOREIGN_ASSET=0x<mainnet_precompile_address> \
-  npx hardhat run scripts/deploy_wrapper.ts --network <mainnet_network>
+  npx hardhat run scripts/deploy_wrapper.ts --network polkadotMainnet
+```
+
+### Verify
+
+```bash
+WRAPPER_ADDRESS=0x... ERC20_ADDRESS=0x... FOREIGN_ASSET=0x... \
+  npx hardhat run scripts/e2e_test.ts --network polkadotMainnet
 ```
 
 ### Post-Deployment (Critical)
 
 Execute the [Post-Deployment Checklist](#post-deployment-checklist) immediately after deployment.
+
+For operator execution, prefer `docs/PRODUCTION-CHECKLIST.md` because it includes the current production AJUN precompile value, fill-in fields, and abort conditions.
 
 ---
 
@@ -400,10 +435,11 @@ Address (20 bytes):
   Byte 18..19 = 0x0000
 ```
 
-| Asset Type | Prefix |
-|------------|--------|
-| Native assets (`pallet-assets`) | `0x0120` |
-| Foreign assets (`pallet-foreign-assets`) | `0x0220` |
+| Asset Type | Prefix | Mechanism |
+|------------|--------|----------|
+| Native assets (`pallet-assets`) | `0x0120` | `InlineAssetIdExtractor` — direct `u32` ID |
+| Foreign assets (`pallet-foreign-assets`) | `0x0220` | `ForeignAssetIdExtractor` — sequential `Location → u32` index |
+| Pool assets | `0x0320` | `InlineAssetIdExtractor` — direct `u32` ID |
 
 **Example**: Asset ID 1984 (USDT) with native prefix:
 ```

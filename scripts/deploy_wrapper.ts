@@ -1,8 +1,8 @@
 /**
  * Deploy AjunaWrapper system via UUPS proxies (ERC20 + Wrapper + grant MINTER_ROLE).
  *
- * This is a plain Hardhat script (no Ignition) so we can pass the
- * foreign asset address via environment variable — simpler for the E2E pipeline.
+ * This is a plain Hardhat script that takes the foreign asset address via
+ * environment variable — simpler for the E2E pipeline.
  *
  * Each contract is deployed as:
  *   1. Implementation contract (logic only, no state)

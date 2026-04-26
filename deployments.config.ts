@@ -35,7 +35,7 @@ export interface EnvConfig {
    *
    * The PREFIX depends on the pallet instance:
    *   - Native assets (pallet-assets):   0x0120
-   *   - Foreign assets:                  0x0220  (TBC — verify against live runtime)
+   *   - Foreign assets:                  0x0220  (ForeignAssetIdExtractor, polkadot-sdk PR #10869)
    *
    * Example: asset ID 1984 (USDT) with prefix 0x0120
    *   → 0x000007C000000000000000000000000001200000
@@ -65,7 +65,7 @@ const configs: Record<string, EnvConfig> = {
    *   1. Start node:        ./scripts/run_local_node.sh
    *   2. Fund account:      npx hardhat run scripts/fund_account.ts --network local
    *   3. Deploy mock FA:    npx hardhat run scripts/deploy_mock_foreign_asset.ts --network local
-   *   4. Deploy contracts:  npx hardhat ignition deploy ./ignition/modules/AjunaWrapper.ts --network local
+   *   4. Deploy contracts:  FOREIGN_ASSET=0x<mock> npx hardhat run scripts/deploy_wrapper.ts --network local
    *   5. Run E2E:           npx hardhat run scripts/e2e_test.ts --network local
    */
   local: {
@@ -84,13 +84,12 @@ const configs: Record<string, EnvConfig> = {
    *
    * The testnet runtime includes pallet-assets and pallet-foreign-assets.
    * AJUN must first be transferred via XCM from Ajuna's testnet to AssetHub testnet,
-   * which registers it as a foreign asset with a local integer ID.
+   * which registers it as a foreign asset.
    *
-   * TODO: Once AJUN is registered, look up the asset ID via:
-   *   - Polkadot.js Apps → Developer → Chain State → foreignAssets → asset(multiLocation)
-   *   - Or: https://polkadot.js.org/apps/?rpc=wss://polkadot-asset-hub-rpc.polkadot.io
-   *
-   * Then compute the precompile address using computePrecompileAddress() below.
+   * The ForeignAssetIdExtractor (polkadot-sdk PR #10869) assigns a sequential u32
+   * index to each foreign asset, stored in the AssetsPrecompiles pallet.
+   * Query the index and compute the precompile address:
+   *   npx ts-node scripts/lookup_ajun_asset.ts wss://westend-asset-hub-rpc.polkadot.io
    */
   testnet: {
     name: "Polkadot Hub TestNet",
@@ -98,7 +97,7 @@ const configs: Record<string, EnvConfig> = {
     rpcUrl: "https://services.polkadothub-rpc.com/testnet",
     decimals: 12,
     symbol: "wAJUN",
-    foreignAssetAddress: "", // Compute from on-chain asset ID
+    foreignAssetAddress: "", // Run lookup_ajun_asset.ts to discover; computePrecompileAddress(index, 0x0220)
     wrapperAddress: "",      // Filled after deployment
     erc20Address: "",        // Filled after deployment
   },
@@ -121,6 +120,35 @@ const configs: Record<string, EnvConfig> = {
     foreignAssetAddress: "", // Real precompile address from mainnet state
     wrapperAddress: "",      // Filled after deployment on fork
     erc20Address: "",        // Filled after deployment on fork
+  },
+
+  /**
+   * POLKADOT ASSETHUB MAINNET (Production)
+   *
+   * Production deployment on Polkadot AssetHub.
+   * The ForeignAssetIdExtractor (polkadot-sdk PR #10869) is live — foreign assets
+   * are accessible via ERC20 precompiles at prefix 0x0220.
+   *
+   * To discover the AJUN precompile address:
+   *   npx ts-node scripts/lookup_ajun_asset.ts
+   *
+   * The script queries the AssetsPrecompiles pallet:
+   *   - assetsPrecompiles.foreignAssetIdToAssetIndex(Location) → u32 index
+   *   - Precompile address = computePrecompileAddress(index, 0x0220)
+   *
+   * Deploy:
+   *   FOREIGN_ASSET=0x<address> npx hardhat run scripts/deploy_wrapper.ts --network polkadotMainnet
+   *   Or: ./scripts/deploy_production.sh
+   */
+  production: {
+    name: "Polkadot AssetHub (Production)",
+    chainId: 420420420,
+    rpcUrl: "https://polkadot-asset-hub-eth-rpc.polkadot.io",
+    decimals: 12,
+    symbol: "wAJUN",
+    foreignAssetAddress: "", // Run: npx ts-node scripts/lookup_ajun_asset.ts
+    wrapperAddress: "",      // Filled after deployment
+    erc20Address: "",        // Filled after deployment
   },
 };
 

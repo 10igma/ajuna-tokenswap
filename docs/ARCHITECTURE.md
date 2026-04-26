@@ -116,10 +116,10 @@ Initializable
 
 ```
 Initializable
-├── OwnableUpgradeable         (owner for admin functions)
-├── ReentrancyGuardUpgradeable (mutex on deposit/withdraw)
-├── PausableUpgradeable        (circuit breaker)
-└── UUPSUpgradeable            (_authorizeUpgrade with onlyOwner)
+├── Ownable2StepUpgradeable   (two-step transfer; renounceOwnership disabled)
+├── ReentrancyGuard           (stateless, OZ ≥5.6; ERC-7201 namespaced)
+├── PausableUpgradeable       (circuit breaker)
+└── UUPSUpgradeable           (stateless re-export, OZ ≥5.6; onlyOwner upgrade auth)
 ```
 
 **Custom state:**
@@ -194,38 +194,61 @@ Implementation slot: 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505
 
 ## Storage Layout
 
-### AjunaERC20 Storage Map
+Both contracts inherit from OpenZeppelin Contracts v5 (with the upgradeable
+package on top), which uses **ERC-7201 namespaced storage** ("storage of
+structs at named slots"). Each inherited base contract stores its state in a
+single struct at a deterministic slot derived from a namespace string:
 
-| Slot Range | Owner Contract | Variables |
-|------------|---------------|-----------|
-| 0 | Initializable | `_initialized` (uint8), `_initializing` (bool) — packed |
-| 1 | ERC20Upgradeable | `_balances` mapping |
-| 2 | ERC20Upgradeable | `_allowances` mapping |
-| 3 | ERC20Upgradeable | `_totalSupply` (uint256) |
-| 4 | ERC20Upgradeable | `_name` (string) |
-| 5 | ERC20Upgradeable | `_symbol` (string) |
-| 6-55 | ERC20Upgradeable | `__gap[50]` |
-| 56 | AccessControlUpgradeable | `_roles` mapping |
-| 57-106 | AccessControlUpgradeable | `__gap[49]` |
-| 107 | UUPSUpgradeable | (no storage) |
-| 108 | **AjunaERC20** | `_tokenDecimals` (uint8) |
-| 109-157 | **AjunaERC20** | `__gap[49]` |
+```
+slot(namespace) = keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
+```
 
-### AjunaWrapper Storage Map
+Concrete consequences:
+- Inherited base contracts (`ERC20Upgradeable`, `AccessControlUpgradeable`,
+  `Ownable2StepUpgradeable`, `PausableUpgradeable`, `ReentrancyGuard`,
+  `UUPSUpgradeable`, `Initializable`) do **not** occupy sequential slots in
+  the derived contract. They live at hashed, non-overlapping namespaces.
+- As of OZ 5.6, `ReentrancyGuard` and `UUPSUpgradeable` are **stateless**
+  in the sense that they have no init function — both use namespaced
+  storage at fixed slots, so no `__init` call is required (and none exists).
+  They are imported from `@openzeppelin/contracts` rather than the
+  upgradeable package.
+- The derived contract (`AjunaERC20` / `AjunaWrapper`) has full use of slots
+  starting at `0` for its own state.
+- The `__gap` arrays therefore only need to cover **future state added to the
+  derived contract**, not the inherited bases.
 
-| Slot Range | Owner Contract | Variables |
-|------------|---------------|-----------|
-| 0 | Initializable | `_initialized`, `_initializing` |
-| 1 | OwnableUpgradeable | `_owner` (address) |
-| 2-51 | OwnableUpgradeable | `__gap[49]` |
-| 52 | ReentrancyGuardUpgradeable | `_status` (uint256) |
-| 53-102 | ReentrancyGuardUpgradeable | `__gap[49]` |
-| 103 | PausableUpgradeable | `_paused` (bool) |
-| 104-153 | PausableUpgradeable | `__gap[49]` |
-| 154 | UUPSUpgradeable | (no storage) |
-| 155 | **AjunaWrapper** | `token` (address) |
-| 156 | **AjunaWrapper** | `foreignAsset` (address) |
-| 157-204 | **AjunaWrapper** | `__gap[48]` |
+### AjunaERC20 (derived storage, slots starting at 0)
+
+| Slot Range | Variable | Type | Source |
+|------------|----------|------|--------|
+| 0 | `_tokenDecimals` | `uint8` | `AjunaERC20` |
+| 1 – 49 | `__gap[49]` | `uint256[49]` | `AjunaERC20` (forward-compat reserve) |
+
+Inherited state lives at namespaced slots, e.g. (informational):
+
+| Namespace | Holds |
+|-----------|-------|
+| `openzeppelin.storage.Initializable` | `_initialized`, `_initializing` |
+| `openzeppelin.storage.ERC20` | balances, allowances, total supply, name, symbol |
+| `openzeppelin.storage.AccessControl` | role mappings |
+
+### AjunaWrapper (derived storage, slots starting at 0)
+
+| Slot Range | Variable | Type | Source |
+|------------|----------|------|--------|
+| 0 | `token` | `AjunaERC20` (address) | `AjunaWrapper` |
+| 1 | `foreignAsset` | `IERC20Precompile` (address) | `AjunaWrapper` |
+| 2 – 49 | `__gap[48]` | `uint256[48]` | `AjunaWrapper` (forward-compat reserve) |
+
+Inherited state lives at namespaced slots, e.g. (informational):
+
+| Namespace | Holds |
+|-----------|-------|
+| `openzeppelin.storage.Initializable` | `_initialized`, `_initializing` |
+| `openzeppelin.storage.Ownable` | `_owner` |
+| `openzeppelin.storage.ReentrancyGuard` | `_status` |
+| `openzeppelin.storage.Pausable` | `_paused` |
 
 ---
 
@@ -367,7 +390,6 @@ interface IERC20Precompile {
 |-------|-----------|------|
 | `Deposited` | `user` (indexed), `amount` | After successful wrap |
 | `Withdrawn` | `user` (indexed), `amount` | After successful unwrap |
-| `ForeignAssetUpdated` | `oldAddress` (indexed), `newAddress` (indexed) | Precompile address changed |
 | `TokenRescued` | `tokenAddress` (indexed), `to` (indexed), `amount` | Stray tokens rescued |
 | `Paused` | `account` | Contract paused (from PausableUpgradeable) |
 | `Unpaused` | `account` | Contract unpaused |
@@ -392,7 +414,7 @@ interface IERC20Precompile {
 
 ```
 Level 1: Hardhat In-Memory EVM
-  ├── 37 unit tests (test/wrapper.test.ts)
+  ├── 81 unit tests (test/wrapper.test.ts)
   ├── Mock Foreign Asset (deployed in test setup)
   ├── Proxy deployment helpers (deployERC20Proxy, deployWrapperProxy)
   └── Tests: deployment, deposit, withdraw, access, pause, rescue, UUPS
@@ -463,26 +485,20 @@ ajuna-tokenswap/
 │       └── IERC20Precompile.sol        # Foreign Asset ERC20 interface
 │
 ├── test/
-│   └── wrapper.test.ts                 # 37 unit tests (Hardhat in-memory)
+│   └── wrapper.test.ts                 # 81 unit tests (Hardhat in-memory)
 │
 ├── scripts/
 │   ├── setup_node.sh                   # Build revive-dev-node from source
 │   ├── run_local_node.sh               # Start local node + eth-rpc
 │   ├── deploy_mock_foreign_asset.ts    # Deploy mock FA for local testing
-│   ├── deploy_wrapper.ts              # Deploy ERC20 + Wrapper (UUPS proxies)
-│   ├── deploy_testnet.sh              # Deploy to Polkadot Hub TestNet
-│   ├── e2e_test.ts                    # E2E integration test script
-│   ├── e2e_local.sh                   # Full automated E2E pipeline
-│   ├── fund_account.ts                # Fund a test account from Alith
-│   ├── lookup_ajun_asset.ts           # Query AJUN asset on live chain
-│   ├── check_chain_id.ts             # Verify chain ID
-│   ├── check_dev_accounts.ts          # List dev account balances
-│   └── serve_ui.sh                    # Serve UIs on localhost:8000
-│
-├── ignition/
-│   ├── modules/
-│   │   └── AjunaWrapper.ts            # Hardhat Ignition deployment module
-│   └── parameters.json                # Default parameters
+│   ├── deploy_wrapper.ts               # Deploy ERC20 + Wrapper (UUPS proxies)
+│   ├── deploy_testnet.sh               # Deploy to Polkadot Hub TestNet
+│   ├── deploy_production.sh            # Deploy to Polkadot Asset Hub mainnet
+│   ├── e2e_test.ts                     # E2E integration test script
+│   ├── e2e_local.sh                    # Full automated E2E pipeline
+│   ├── fund_account.ts                 # Fund a test account from Alith
+│   ├── lookup_ajun_asset.ts            # Query AJUN asset on live chain
+│   └── serve_ui.sh                     # Serve UIs on localhost:8000
 │
 ├── docs/                              # Documentation
 │   ├── README.md                      # Documentation index

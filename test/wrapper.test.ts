@@ -83,6 +83,12 @@ describe("AjunaWrapper System", function () {
     // 3. Grant MINTER_ROLE to Wrapper
     const MINTER_ROLE = await token.MINTER_ROLE();
     await token.grantRole(MINTER_ROLE, await wrapper.getAddress());
+
+    // 4. Disable the initial allowlist gate so the existing test groups
+    //    (which use arbitrary users as depositors/withdrawers) keep behaving
+    //    like the open-to-everyone production state. The "Allowlist" describe
+    //    block below re-enables it for gate-specific tests.
+    await wrapper.connect(owner).setAllowlistEnabled(false);
   });
 
   // ─── Helper ───────────────────────────────────────────────
@@ -610,31 +616,71 @@ describe("AjunaWrapper System", function () {
   // ═══════════════════════════════════════════════════════════
 
   describe("Ownership Transfer", function () {
-    it("should transfer ownership via 2-step process", async function () {
-      // OwnableUpgradeable uses transferOwnership (1-step in OZ v5 Ownable)
-      await wrapper.connect(owner).transferOwnership(user.address);
+    it("should transfer ownership via 2-step process (transferOwnership + acceptOwnership)", async function () {
+      // Step 1: current owner proposes — does not yet change owner()
+      await expect(wrapper.connect(owner).transferOwnership(user.address))
+        .to.emit(wrapper, "OwnershipTransferStarted")
+        .withArgs(owner.address, user.address);
 
-      // In OZ v5 OwnableUpgradeable, transferOwnership is immediate (not 2-step)
+      // Pending state: owner unchanged, pendingOwner set
+      expect(await wrapper.owner()).to.equal(owner.address);
+      expect(await (wrapper as any).pendingOwner()).to.equal(user.address);
+
+      // Old owner still has full power until acceptance
+      await wrapper.connect(owner).pause();
+      await wrapper.connect(owner).unpause();
+
+      // Random caller cannot accept
+      await expect((wrapper as any).connect(user2).acceptOwnership()).to.be.reverted;
+      // Old owner cannot accept on behalf of new owner
+      await expect((wrapper as any).connect(owner).acceptOwnership()).to.be.reverted;
+
+      // Step 2: pending owner accepts — ownership transfers
+      await (wrapper as any).connect(user).acceptOwnership();
       expect(await wrapper.owner()).to.equal(user.address);
+      expect(await (wrapper as any).pendingOwner()).to.equal(ZERO_ADDRESS);
 
-      // Verify old owner can no longer act
+      // Old owner can no longer act
       await expect(wrapper.connect(owner).pause()).to.be.reverted;
 
-      // Verify new owner can act
+      // New owner can act
       await wrapper.connect(user).pause();
       expect(await wrapper.paused()).to.be.true;
     });
 
-    it("should prevent transferring ownership to zero address", async function () {
-      await expect(
-        wrapper.connect(owner).transferOwnership(ZERO_ADDRESS)
-      ).to.be.reverted;
+    it("should allow cancelling a pending ownership transfer (Ownable2Step)", async function () {
+      // Initiate transfer
+      await wrapper.connect(owner).transferOwnership(user.address);
+      expect(await (wrapper as any).pendingOwner()).to.equal(user.address);
+
+      // Owner cancels by transferring to zero — Ownable2Step explicitly allows this
+      await wrapper.connect(owner).transferOwnership(ZERO_ADDRESS);
+      expect(await (wrapper as any).pendingOwner()).to.equal(ZERO_ADDRESS);
+
+      // Original owner remains
+      expect(await wrapper.owner()).to.equal(owner.address);
+
+      // Previously pending account cannot accept anything
+      await expect((wrapper as any).connect(user).acceptOwnership()).to.be.reverted;
     });
 
     it("should prevent non-owner from transferring ownership", async function () {
       await expect(
         wrapper.connect(user).transferOwnership(user2.address)
       ).to.be.reverted;
+    });
+
+    it("should block renounceOwnership for any caller", async function () {
+      await expect(wrapper.connect(owner).renounceOwnership())
+        .to.be.revertedWith("AjunaWrapper: renouncing ownership is disabled");
+      await expect(wrapper.connect(user).renounceOwnership())
+        .to.be.revertedWith("AjunaWrapper: renouncing ownership is disabled");
+
+      // Owner unchanged
+      expect(await wrapper.owner()).to.equal(owner.address);
+      // Owner can still act
+      await wrapper.connect(owner).pause();
+      expect(await wrapper.paused()).to.be.true;
     });
   });
 
@@ -825,6 +871,10 @@ describe("AjunaWrapper System", function () {
       // Grant MINTER_ROLE to the malicious wrapper on the token
       await token.grantRole(await token.MINTER_ROLE(), await maliciousWrapper.getAddress());
 
+      // Disable allowlist on the malicious wrapper so the test exercises the
+      // reentrancy guard path itself, not the gate.
+      await maliciousWrapper.connect(owner).setAllowlistEnabled(false);
+
       // Setup: mint tokens and configure attack
       const amount = ethers.parseUnits("100", DECIMALS);
       await reentrantToken.mintTo(user.address, amount * 2n);
@@ -888,6 +938,268 @@ describe("AjunaWrapper System", function () {
       await expect(wrapper.connect(user).withdraw(amount))
         .to.emit(token, "Transfer")
         .withArgs(user.address, ZERO_ADDRESS, amount);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Allowlist (initial-rollout gate)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("Allowlist", function () {
+    const amount = ethers.parseUnits("100", DECIMALS);
+
+    // Re-enable the gate at the start of every allowlist-specific test.
+    beforeEach(async function () {
+      await wrapper.connect(owner).setAllowlistEnabled(true);
+    });
+
+    it("should be enabled by default on a fresh deploy", async function () {
+      const fresh = await deployWrapperProxy(
+        await token.getAddress(),
+        await foreignAssetMock.getAddress()
+      );
+      expect(await fresh.allowlistEnabled()).to.be.true;
+    });
+
+    it("should block a non-allowlisted user when enabled", async function () {
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await expect(wrapper.connect(user).deposit(amount))
+        .to.be.revertedWith("AjunaWrapper: not allowlisted");
+    });
+
+    it("should allow an allowlisted user when enabled", async function () {
+      await wrapper.connect(owner).setAllowlist(user.address, true);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+      expect(await token.balanceOf(user.address)).to.equal(amount);
+    });
+
+    it("should let owner deposit even with allowlist enabled and mapping empty", async function () {
+      // Owner needs foreign assets first — mint via the mock
+      await foreignAssetMock.connect(owner).mint(owner.address, amount);
+      await foreignAssetMock.connect(owner).approve(await wrapper.getAddress(), amount);
+
+      // Owner is implicitly allowed regardless of allowlist contents
+      await wrapper.connect(owner).deposit(amount);
+      expect(await token.balanceOf(owner.address)).to.equal(amount);
+    });
+
+    it("should let owner deposit even after being explicitly removed from allowlist", async function () {
+      // Set then explicitly remove the owner — short-circuit must still allow
+      await wrapper.connect(owner).setAllowlist(owner.address, true);
+      await wrapper.connect(owner).setAllowlist(owner.address, false);
+      expect(await wrapper.allowlisted(owner.address)).to.be.false;
+
+      await foreignAssetMock.connect(owner).mint(owner.address, amount);
+      await foreignAssetMock.connect(owner).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(owner).deposit(amount);
+      expect(await token.balanceOf(owner.address)).to.equal(amount);
+    });
+
+    it("should let a NEW owner deposit immediately after acceptOwnership, without any setAllowlist call", async function () {
+      // Multisig handoff: transfer + accept
+      await wrapper.connect(owner).transferOwnership(user2.address);
+      await (wrapper as any).connect(user2).acceptOwnership();
+      expect(await wrapper.owner()).to.equal(user2.address);
+
+      // user2 (new owner) deposits without ever being added to allowlist
+      await foreignAssetMock.connect(user2).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user2).deposit(amount);
+      expect(await token.balanceOf(user2.address)).to.equal(amount);
+
+      // And the previous owner is now a regular non-allowlisted user → blocked
+      await foreignAssetMock.connect(owner).mint(owner.address, amount);
+      await foreignAssetMock.connect(owner).approve(await wrapper.getAddress(), amount);
+      await expect(wrapper.connect(owner).deposit(amount))
+        .to.be.revertedWith("AjunaWrapper: not allowlisted");
+    });
+
+    it("should gate withdraw the same way as deposit", async function () {
+      // Allowlist user, deposit, then revoke and try to withdraw
+      await wrapper.connect(owner).setAllowlist(user.address, true);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+
+      // Revoke the allowlist entry
+      await wrapper.connect(owner).setAllowlist(user.address, false);
+
+      await token.connect(user).approve(await wrapper.getAddress(), amount);
+      await expect(wrapper.connect(user).withdraw(amount))
+        .to.be.revertedWith("AjunaWrapper: not allowlisted");
+    });
+
+    it("should be a no-op when disabled — anyone can deposit and withdraw", async function () {
+      await wrapper.connect(owner).setAllowlistEnabled(false);
+      expect(await wrapper.allowlistEnabled()).to.be.false;
+
+      // user is NOT in the mapping, but the gate is off
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+
+      await token.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).withdraw(amount);
+
+      expect(await token.balanceOf(user.address)).to.equal(0);
+    });
+
+    it("should support setAllowlistBatch for bulk add and bulk remove", async function () {
+      // Bulk add
+      await wrapper.connect(owner).setAllowlistBatch([user.address, user2.address], true);
+      expect(await wrapper.allowlisted(user.address)).to.be.true;
+      expect(await wrapper.allowlisted(user2.address)).to.be.true;
+
+      // Both can deposit
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await foreignAssetMock.connect(user2).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+      await wrapper.connect(user2).deposit(amount);
+
+      // Bulk remove
+      await wrapper.connect(owner).setAllowlistBatch([user.address, user2.address], false);
+      expect(await wrapper.allowlisted(user.address)).to.be.false;
+      expect(await wrapper.allowlisted(user2.address)).to.be.false;
+    });
+
+    it("should reject setAllowlist with zero address", async function () {
+      await expect(wrapper.connect(owner).setAllowlist(ZERO_ADDRESS, true))
+        .to.be.revertedWith("AjunaWrapper: account is zero address");
+    });
+
+    it("should reject setAllowlistBatch containing a zero address", async function () {
+      await expect(
+        wrapper.connect(owner).setAllowlistBatch([user.address, ZERO_ADDRESS], true)
+      ).to.be.revertedWith("AjunaWrapper: account is zero address");
+    });
+
+    it("should reject setAllowlist from non-owner", async function () {
+      await expect(wrapper.connect(user).setAllowlist(user.address, true)).to.be.reverted;
+    });
+
+    it("should reject setAllowlistEnabled from non-owner", async function () {
+      await expect(wrapper.connect(user).setAllowlistEnabled(false)).to.be.reverted;
+    });
+
+    it("should emit AllowlistEnabledUpdated and AllowlistUpdated events", async function () {
+      await expect(wrapper.connect(owner).setAllowlistEnabled(false))
+        .to.emit(wrapper, "AllowlistEnabledUpdated")
+        .withArgs(false);
+
+      await expect(wrapper.connect(owner).setAllowlist(user.address, true))
+        .to.emit(wrapper, "AllowlistUpdated")
+        .withArgs(user.address, true);
+
+      await expect(wrapper.connect(owner).setAllowlistBatch([user.address, user2.address], true))
+        .to.emit(wrapper, "AllowlistUpdated")
+        .withArgs(user.address, true)
+        .and.to.emit(wrapper, "AllowlistUpdated")
+        .withArgs(user2.address, true);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  SafeERC20 Defense (LOW-A)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("SafeERC20 Defense", function () {
+    it("should reject deposit when foreign asset returns false from transferFrom", async function () {
+      // Deploy a wrapper pointed at a misbehaving foreign asset
+      const Bad = await ethers.getContractFactory("BadERC20");
+      const bad = await Bad.deploy();
+      await bad.waitForDeployment();
+
+      const badWrapper = await deployWrapperProxy(
+        await token.getAddress(),
+        await bad.getAddress()
+      );
+      await token.grantRole(await token.MINTER_ROLE(), await badWrapper.getAddress());
+      await badWrapper.connect(owner).setAllowlistEnabled(false);
+
+      const amount = ethers.parseUnits("10", DECIMALS);
+      await bad.mintTo(user.address, amount);
+      // Approval doesn't matter; the malicious transferFrom returns false silently.
+
+      // SafeERC20 must reject the silent-false return. Without the LOW-A fix
+      // this would pass through (deposit would silently mint wAJUN with no
+      // backing — invariant broken).
+      await expect(badWrapper.connect(user).deposit(amount)).to.be.reverted;
+
+      // Confirm no wAJUN was minted (invariant still intact).
+      expect(await token.balanceOf(user.address)).to.equal(0);
+      expect(await token.totalSupply()).to.equal(0);
+    });
+
+    it("should reject withdraw when foreign asset returns false from transfer", async function () {
+      // Deploy a wrapper pointed at a malicious token that allows the ERC20
+      // burnFrom to succeed (we hand-mint the wAJUN without doing an actual
+      // deposit) and then refuses to release the foreign asset.
+      const Bad = await ethers.getContractFactory("BadERC20");
+      const bad = await Bad.deploy();
+      await bad.waitForDeployment();
+
+      const badWrapper = await deployWrapperProxy(
+        await token.getAddress(),
+        await bad.getAddress()
+      );
+      await token.grantRole(await token.MINTER_ROLE(), await badWrapper.getAddress());
+      await badWrapper.connect(owner).setAllowlistEnabled(false);
+
+      // Manually mint wAJUN to user so withdraw passes the balance check and
+      // the burnFrom step. We bypass the deposit path entirely so we can
+      // isolate the transfer failure on withdraw.
+      const amount = ethers.parseUnits("10", DECIMALS);
+      await token.grantRole(await token.MINTER_ROLE(), owner.address);
+      await token.connect(owner).mint(user.address, amount);
+      await token.connect(user).approve(await badWrapper.getAddress(), amount);
+
+      await expect(badWrapper.connect(user).withdraw(amount)).to.be.reverted;
+
+      // wAJUN was NOT burned because burnFrom + safeTransfer happens atomically
+      // and the safeTransfer revert rolls back the burn.
+      expect(await token.balanceOf(user.address)).to.equal(amount);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  //  Invariant View (INFO-C)
+  // ═══════════════════════════════════════════════════════════
+
+  describe("isInvariantHealthy", function () {
+    it("should return true on a fresh wrapper (0 == 0)", async function () {
+      expect(await wrapper.isInvariantHealthy()).to.be.true;
+    });
+
+    it("should remain true after a normal deposit", async function () {
+      const amount = ethers.parseUnits("100", DECIMALS);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+      expect(await wrapper.isInvariantHealthy()).to.be.true;
+    });
+
+    it("should remain true after a normal withdraw", async function () {
+      const amount = ethers.parseUnits("100", DECIMALS);
+      await foreignAssetMock.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).deposit(amount);
+
+      await token.connect(user).approve(await wrapper.getAddress(), amount);
+      await wrapper.connect(user).withdraw(amount);
+
+      expect(await wrapper.isInvariantHealthy()).to.be.true;
+      expect(await token.totalSupply()).to.equal(0);
+    });
+
+    it("should return false (over-collateralized) after a direct AJUN transfer to the wrapper", async function () {
+      // A third party direct-transfers AJUN to the wrapper (no deposit).
+      // Treasury balance grows; totalSupply does NOT. The strict-equality
+      // check returns false; the system is over-collateralized, which is
+      // safe — but this is exactly the signal off-chain monitors need.
+      const dust = ethers.parseUnits("1", DECIMALS);
+      await foreignAssetMock.connect(user).transfer(await wrapper.getAddress(), dust);
+
+      expect(await wrapper.isInvariantHealthy()).to.be.false;
+      // Treasury > supply (over-collateralized, not under-collateralized)
+      expect(await foreignAssetMock.balanceOf(await wrapper.getAddress())).to.be.gt(
+        await token.totalSupply()
+      );
     });
   });
 });
