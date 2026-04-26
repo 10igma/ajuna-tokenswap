@@ -18,7 +18,7 @@ This document describes the security features, access control model, threat miti
 - [Storage Gaps](#storage-gaps)
 - [Implementation Sealing](#implementation-sealing)
 - [Initializer Validation](#initializer-validation)
-- [Mutable Foreign Asset Address](#mutable-foreign-asset-address)
+- [Immutable Foreign Asset Address](#immutable-foreign-asset-address)
 - [Known Risks & Mitigations](#known-risks--mitigations)
 - [Production Hardening Checklist](#production-hardening-checklist)
 - [Audit Scope](#audit-scope)
@@ -125,17 +125,42 @@ AjunaWrapper uses OpenZeppelin's `OwnableUpgradeable` with a single `owner`.
 
 ### Ownership Transfer
 
-`OwnableUpgradeable` supports two-step ownership transfer:
+`AjunaWrapper` inherits `Ownable2StepUpgradeable`, which uses the standard
+**two-step** ownership transfer flow:
 
 ```solidity
-// Step 1: Current owner proposes new owner
+// Step 1: current owner proposes
 wrapper.transferOwnership(newOwner);
+// → emits OwnershipTransferStarted(currentOwner, newOwner)
+// → owner() unchanged; pendingOwner() == newOwner
 
-// Step 2: New owner accepts
-wrapper.acceptOwnership();  // Called from newOwner
+// Step 2: proposed owner accepts (must be msg.sender)
+wrapper.acceptOwnership();
+// → emits OwnershipTransferred(currentOwner, newOwner)
+// → owner() == newOwner; pendingOwner() cleared
 ```
 
-This prevents accidentally transferring ownership to a wrong address.
+The current owner retains full control until `acceptOwnership()` is called by
+the proposed owner. This prevents transfers to wrong, uncontrolled, or
+unaware addresses — a single typo no longer hands the wrapper to the wrong
+party irrecoverably.
+
+Cancelling a pending transfer is done by re-calling `transferOwnership` with
+a different address (or `address(0)` to clear the pending owner without
+re-proposing).
+
+### Renouncing Ownership Is Disabled
+
+`renounceOwnership()` is overridden to always revert. The wrapper relies on a
+live owner for `pause` / `unpause`, `rescueToken`, and UUPS upgrade
+authorization. Renouncing ownership would permanently brick all of these
+levers on a treasury that holds user funds — an unrecoverable state.
+
+If a contract needs to be made permanently non-upgradeable in the future,
+the correct path is a deliberate UUPS upgrade to an implementation whose
+`_authorizeUpgrade` always reverts (see [UPGRADE.md](UPGRADE.md) →
+"Making a Contract Non-Upgradeable"). Pause and rescue capabilities are
+preserved by such an upgrade; renouncing ownership would discard them.
 
 ---
 
@@ -381,7 +406,6 @@ Before going live, ensure:
 - [ ] **Monitoring** set up for:
   - `Deposited` / `Withdrawn` events (unusual volumes)
   - `Paused` / `Unpaused` events
-  - `ForeignAssetUpdated` events
   - `Upgraded` events (proxy implementation change)
   - Invariant drift: `totalSupply != foreignAsset.balanceOf(wrapper)`
 - [ ] **Audit completed** and findings addressed

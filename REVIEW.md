@@ -1,408 +1,320 @@
 # Ajuna Token Swap — Security Review
 
-**Date**: 2026-02-15
-**Scope**: All Solidity contracts in `contracts/`, deployment scripts, Ignition module, and test suite
-**Contracts Reviewed**:
-- `contracts/AjunaERC20.sol` — UUPS-upgradeable ERC20 (wAJUN)
-- `contracts/AjunaWrapper.sol` — UUPS-upgradeable treasury
-- `contracts/Proxy.sol` — ERC1967Proxy import
-- `contracts/interfaces/IERC20Precompile.sol` — Foreign asset interface
+**Date**: 2026-04-26
+**Scope**: All Solidity contracts in `contracts/`, deployment scripts, Ignition module, test suite, and operational configuration.
+**Status**: Supersedes the 2026-02-15 review. All prior findings re-verified against current code.
 
-**Solidity Version**: 0.8.28
-**Framework**: OpenZeppelin Contracts Upgradeable v5.4.0, Hardhat v2.28.4
+> **Update (post-review same-day)**: MEDIUM-A and LOW-B identified in §2 of this
+> review have been fixed in code on the same day this review was written:
+> `AjunaWrapper` now inherits `Ownable2StepUpgradeable` and `renounceOwnership`
+> is overridden to revert. Test suite expanded from 60 → 61 with 4 ownership
+> tests covering 2-step transfer, cancellation, non-owner rejection, and
+> renounce-blocked. Doc-vs-code drift in [docs/SECURITY.md](docs/SECURITY.md)
+> is also resolved. The findings remain documented below as authored, with
+> per-finding status notes reflecting the fix.
+
+**Contracts reviewed**:
+- [contracts/AjunaERC20.sol](contracts/AjunaERC20.sol) — UUPS-upgradeable ERC20 (wAJUN)
+- [contracts/AjunaWrapper.sol](contracts/AjunaWrapper.sol) — UUPS-upgradeable treasury
+- [contracts/Proxy.sol](contracts/Proxy.sol) — ERC1967Proxy artifact import
+- [contracts/interfaces/IERC20Precompile.sol](contracts/interfaces/IERC20Precompile.sol) — Foreign-asset interface
+- Mocks (test-only): [contracts/mocks/AjunaERC20V2.sol](contracts/mocks/AjunaERC20V2.sol), [contracts/mocks/AjunaWrapperV2.sol](contracts/mocks/AjunaWrapperV2.sol), [contracts/mocks/ReentrantToken.sol](contracts/mocks/ReentrantToken.sol)
+
+**Toolchain**: Solidity 0.8.28, OpenZeppelin Contracts Upgradeable v5.x, Hardhat 2.x with `@parity/hardhat-polkadot`.
 
 ---
 
 ## Executive Summary
 
-The Ajuna Token Swap system implements a **Mint-and-Lock** pattern behind UUPS proxies. The architecture is sound and follows established patterns. The previous review's critical findings (unchecked burn, no pausability, no rescue) have all been **resolved**. No critical or high-severity issues remain. Several medium and low findings are documented below, primarily around operational security and edge cases.
+Since the 2026-02-15 review, no contract source files have changed (verified via `git log` — the last contract-affecting commit pre-dates the review). All prior fixes remain in place: `burnFrom`-with-allowance, `_disableInitializers()`, `_authorizeUpgrade(code.length > 0)`, `rescueToken` guards on both `foreignAsset` and `token`, max-decimals cap, `SafeERC20.safeTransfer` in rescue, and full removal of `updateForeignAsset()`.
 
-| Severity | Count | Status |
-|----------|-------|--------|
+This review focuses on areas under-covered previously: **ownership transfer semantics**, **renounce-ownership exposure**, **defense-in-depth on token interactions**, and **operational / deployment-time security** as the project moves into production with the live AJUN precompile (`0x0000002d…02200000`).
+
+| Severity | Count | Notes |
+|----------|-------|-------|
 | **Critical** | 0 | — |
 | **High** | 0 | — |
-| **Medium** | 3 | 2 Fixed, 1 Accepted |
-| **Low** | 5 | 4 Fixed, 1 Accepted |
-| **Informational** | 4 | Acknowledged |
+| **Medium** | 1 new (✅ fixed) + 1 carry-over (accepted) | M-A: switched to `Ownable2StepUpgradeable`; M-3: governance asymmetry, accepted |
+| **Low** | 2 new (1 ✅ fixed, 1 open) + 1 carry-over (accepted) | L-B: ✅ `renounceOwnership` reverts; L-A: open (defense-in-depth on `transferFrom`/`transfer`); L-1: accepted |
+| **Informational** | 5 | Operational and forward-compat |
+
+The contracts are production-ready in terms of contract logic. After applying the M-A and L-B fixes, the remaining concerns are operational and accepted: governance asymmetry (mitigated by multisig + timelock), redundant balance check (kept for UX), and approval front-running (mitigated at the dApp layer). The open low-severity item L-A is defense-in-depth and benign against the current AssetHub precompile.
 
 ---
 
-## 1. Previous Review Findings — Status
+## 1. Status of Prior Review (2026-02-15)
 
-All critical issues from the previous review have been addressed:
+All prior findings re-verified. None have regressed.
 
-| Previous Finding | Severity | Status |
-|-----------------|----------|--------|
-| `burn()` can burn any user's tokens without approval | HIGH | **FIXED** — Replaced with `burnFrom()` using `_spendAllowance` |
-| No pausability | MEDIUM | **FIXED** — `PausableUpgradeable` added with `whenNotPaused` on `deposit`/`withdraw` |
-| No emergency rescue function | MEDIUM | **FIXED** — `rescueToken()` added with foreign asset guard |
-| No upgradeability | MEDIUM | **FIXED** — Full UUPS proxy pattern implemented |
-| Immutable foreign asset address | LOW | **N/A** — `foreignAsset` is now intentionally set-once in `initialize()`; changes require UUPS upgrade |
-
----
-
-## 2. Architecture Assessment
-
-### What Is Working Well
-
-| Aspect | Assessment |
-|--------|-----------|
-| **Mint-and-Lock pattern** | Correct. 1:1 invariant maintained atomically in `deposit()` and `withdraw()` |
-| **UUPS proxy pattern** | Properly implemented. `_disableInitializers()` in both constructors. `__gap` reservations present |
-| **burnFrom with allowance** | Correct. Uses `_spendAllowance()` — Wrapper cannot burn without user's explicit `approve()` |
-| **Role separation** | `MINTER_ROLE` (Wrapper only), `UPGRADER_ROLE` (admin), `DEFAULT_ADMIN_ROLE` (admin). Deployer does NOT get `MINTER_ROLE` |
-| **Reentrancy protection** | `nonReentrant` on both `deposit()` and `withdraw()` |
-| **Pausable circuit breaker** | `whenNotPaused` on user-facing functions; admin functions remain available during pause |
-| **Rescue with guard** | Cannot rescue locked foreign asset — invariant protected |
-| **Input validation** | Zero-address and zero-amount checks present |
-| **Event emission** | All state-changing operations emit indexed events |
-| **Test coverage** | 37 tests including 8 UUPS-specific, role checks, pause, rescue, multi-user invariant |
+| Prior finding | Severity | Re-verified status |
+|---------------|----------|--------------------|
+| M-1: `rescueToken` unchecked return | Medium | ✅ Still uses `SafeERC20.safeTransfer` ([AjunaWrapper.sol:151](contracts/AjunaWrapper.sol#L151)) |
+| M-2: `updateForeignAsset` + rescue bypass | Medium | ✅ `updateForeignAsset()` still absent; `foreignAsset` set-once in `initialize()` ([AjunaWrapper.sol:57-69](contracts/AjunaWrapper.sol#L57-L69)) |
+| M-3: Ownable vs AccessControl asymmetry | Medium | ⚠ Accepted, still present — see §3 carry-over |
+| L-1: Redundant `balanceOf` check in `withdraw` | Low | ⚠ Accepted, still present ([AjunaWrapper.sol:107-110](contracts/AjunaWrapper.sol#L107-L110)) |
+| L-2: `_authorizeUpgrade` no impl validation | Low | ✅ `code.length > 0` check on both contracts |
+| L-3: Rescue can extract wAJUN | Low | ✅ Block on `address(token)` present |
+| L-4: No max decimals validation | Low | ✅ `decimals_ <= 18` enforced |
+| L-5: ERC20 approval front-run | Low | ⚠ Industry-standard; mitigate at dApp layer |
 
 ---
 
-## 3. Findings
+## 2. New Findings
 
-### MEDIUM-1: `rescueToken()` Does Not Check Return Value — **FIXED**
+### MEDIUM-A: AjunaWrapper uses single-step `transferOwnership` — typo loses control permanently — ✅ **FIXED**
 
-**File**: `AjunaWrapper.sol`, line 169
-**Severity**: Medium
-**Status**: ✅ **FIXED**
+**Severity**: Medium (operational, but the failure mode is irreversible)
+**File**: [contracts/AjunaWrapper.sol:30](contracts/AjunaWrapper.sol#L30)
+**Status**: ✅ Fixed — `AjunaWrapper` now inherits `Ownable2StepUpgradeable`. `transferOwnership` sets a `pendingOwner`; the proposed account must call `acceptOwnership` to complete the handover. Storage layout is preserved (the new `_pendingOwner` lives at the namespaced ERC-7201 slot `openzeppelin.storage.Ownable2Step`, separate from the existing `Ownable` slot — no `__gap` consumed). Tests at [test/wrapper.test.ts](test/wrapper.test.ts) "Ownership Transfer" group cover 2-step happy path, cancellation, non-owner rejection.
+
+`AjunaWrapper` inherits `OwnableUpgradeable`. In OpenZeppelin Contracts Upgradeable v5, this is the **single-step** owner module: `transferOwnership(newOwner)` immediately writes `_owner = newOwner` with no acceptance step. There is no built-in `Ownable2StepUpgradeable` flow on this contract.
+
+This is confirmed by:
+- The contract import at [AjunaWrapper.sol:4](contracts/AjunaWrapper.sol#L4): `import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";`
+- The test at [test/wrapper.test.ts:613-626](test/wrapper.test.ts#L613-L626) explicitly notes: *"In OZ v5 OwnableUpgradeable, transferOwnership is immediate (not 2-step)"* and asserts ownership flips in one transaction.
+
+**Why it matters**: Phase 8 of [docs/PRODUCTION-CHECKLIST.md](docs/PRODUCTION-CHECKLIST.md) requires transferring ownership to a multisig. A single typo or a wrong-but-valid address (e.g., a known-good but uncontrolled address, or a checksum mismatch silently coerced) hands control of:
+- Pausing / unpausing
+- Rescuing arbitrary ERC20 tokens
+- **Authorizing UUPS upgrades** — i.e. replacing the entire wrapper logic, including bypassing the rescue invariant
+
+…to whoever holds the destination address. There is no on-chain undo.
+
+**Doc-vs-code drift**: [docs/SECURITY.md:128-138](docs/SECURITY.md#L128-L138) currently describes the transfer as a two-step `transferOwnership` + `acceptOwnership` flow. That documentation does not match the deployed contract — it describes `Ownable2StepUpgradeable` semantics that are not in use.
+
+**Recommended fixes (pick one)**:
+1. **Code fix (preferred)**: change the inheritance to `Ownable2StepUpgradeable` and replace the initializer call accordingly. This requires a UUPS upgrade (the storage layout of `Ownable2StepUpgradeable` adds a `_pendingOwner` slot which falls into the existing `__gap[48]` reserve, so no storage collision).
+2. **Operational fix**: keep `OwnableUpgradeable`, but require multisig handoff to be performed via a script that (a) computes EIP-55 checksum, (b) performs a dry-run `eth_call` first, (c) optionally first transfers to an admin-controlled relay address that can re-transfer if a mistake is caught.
+3. **Doc fix at minimum**: update [docs/SECURITY.md:128-138](docs/SECURITY.md#L128-L138) to remove the `acceptOwnership()` step that does not exist.
+
+### LOW-A: `deposit` and `withdraw` interact with the foreign asset via raw `transferFrom`/`transfer`
+
+**Severity**: Low (defense-in-depth)
+**Files**: [contracts/AjunaWrapper.sol:85-90](contracts/AjunaWrapper.sol#L85-L90), [contracts/AjunaWrapper.sol:116-117](contracts/AjunaWrapper.sol#L116-L117)
+
+`rescueToken` correctly uses `SafeERC20.safeTransfer`. `deposit` and `withdraw` do not — they call `foreignAsset.transferFrom(...)` and `foreignAsset.transfer(...)` directly and check the returned `bool` with `require(success, ...)`.
+
+This is **safe today** because the AssetHub ERC20 precompile (`pallet-revive` foreign-asset wrapper) follows the standard ERC20 contract: returns `true` on success, reverts on failure. The `require(success)` line is therefore unreachable in practice.
+
+**However**:
+- The contract is UUPS-upgradeable and the `foreignAsset` address itself can be redirected via a UUPS upgrade. If a future upgrade ever points the wrapper at a non-standard ERC20 (one that returns nothing, or returns `false` on partial success rather than reverting), the current pattern is brittle.
+- The inconsistency with `rescueToken`'s use of `SafeERC20` makes the codebase harder to reason about under upgrade scenarios.
+
+**Recommendation**: switch `deposit` / `withdraw` to `IERC20(address(foreignAsset)).safeTransferFrom(...)` and `safeTransfer(...)`. SafeERC20 is already imported. No behavior change against the current AssetHub precompile.
+
+### LOW-B: `renounceOwnership` is not overridden — accidental call permanently bricks the wrapper — ✅ **FIXED**
+
+**Severity**: Low (requires owner-key misuse) — but the failure mode is irreversible
+**File**: [contracts/AjunaWrapper.sol:30](contracts/AjunaWrapper.sol#L30)
+**Status**: ✅ Fixed — `renounceOwnership()` is overridden to always revert with "AjunaWrapper: renouncing ownership is disabled" regardless of caller. Test "should block renounceOwnership for any caller" verifies both owner and non-owner are blocked, that the owner remains intact, and that admin levers (`pause`) remain operational after the attempted renounce.
+
+`OwnableUpgradeable.renounceOwnership()` is callable by the owner and sets `_owner = address(0)`. If the wrapper's owner accidentally calls this — or a compromised key intentionally calls it as a final griefing step — the wrapper becomes:
+- Permanently un-pausable
+- Permanently un-rescuable
+- Permanently un-upgradeable (no one can satisfy `_authorizeUpgrade(onlyOwner)`)
+- The `foreignAsset` address is permanently fixed at whatever it currently is
+
+The locked AJUN remains withdrawable by users (the user-facing flow is owner-independent), so this is not a fund-drain scenario, but it permanently disables every emergency lever in the system.
+
+**Recommendation**: override `renounceOwnership` to revert. This is a one-line change:
 
 ```solidity
-// BEFORE (vulnerable):
-IERC20(tokenAddress).transfer(to, amount);  // ← return value not checked
-
-// AFTER (fixed):
-using SafeERC20 for IERC20;
-IERC20(tokenAddress).safeTransfer(to, amount);  // ← reverts on failure
-```
-
-**Fix applied**: Imported `SafeERC20` from OpenZeppelin and replaced `.transfer()` with `.safeTransfer()`. The `using SafeERC20 for IERC20` declaration is at the contract level.
-
----
-
-### MEDIUM-2: `updateForeignAsset()` Can Bypass `rescueToken` Guard — **FIXED**
-
-**File**: `AjunaWrapper.sol` (formerly lines 151–157)
-**Severity**: Medium
-**Status**: ✅ **FIXED** — `updateForeignAsset()` removed entirely
-
-**Original Issue**: The owner could change the `foreignAsset` pointer, then call `rescueToken()` against the original address (which was no longer the "current" foreign asset), draining the locked treasury.
-
-**Fix applied**: `updateForeignAsset()` and the `ForeignAssetUpdated` event were completely removed. The `foreignAsset` address is now set once during `initialize()` and is effectively immutable. If the precompile address ever changes due to a runtime upgrade, a UUPS contract upgrade is required — which is a more auditable and deliberate operation than a simple function call.
-
----
-
-### MEDIUM-3: Dual Access Control Models Create Governance Asymmetry
-
-**Severity**: Medium (Operational)
-
-`AjunaERC20` uses **AccessControl** (role-based, granular) while `AjunaWrapper` uses **Ownable** (single owner). This creates asymmetric governance:
-
-| Action | AjunaERC20 | AjunaWrapper |
-|--------|-----------|-------------|
-| Upgrade | `UPGRADER_ROLE` (can be multisig) | `onlyOwner` (single address) |
-| Admin | `DEFAULT_ADMIN_ROLE` (hierarchical) | `onlyOwner` (flat) |
-| Transfer | `grantRole/revokeRole` (granular) | `transferOwnership` (atomic) |
-
-**Impact**: In production, the Wrapper owner is a single point of failure. If the owner key is compromised, the attacker can: pause/unpause, update foreign asset, rescue tokens, and upgrade the contract.
-
-**Recommendation**: Consider switching AjunaWrapper to `AccessControlUpgradeable` with separate roles (`PAUSER_ROLE`, `UPGRADER_ROLE`, `ADMIN_ROLE`), or accept the operational risk and ensure the owner is always a multisig/timelock.
-
----
-
-### LOW-1: `withdraw()` Redundant Balance Check
-
-**File**: `AjunaWrapper.sol`, lines 113–116
-**Severity**: Low
-
-```solidity
-function withdraw(uint256 amount) external nonReentrant whenNotPaused {
-    require(amount > 0, "Amount must be > 0");
-    require(
-        token.balanceOf(msg.sender) >= amount,
-        "Insufficient ERC20 balance"
-    );
-    token.burnFrom(msg.sender, amount);
-```
-
-**Issue**: The `balanceOf` check is redundant. `burnFrom()` internally calls `_burn()` which already reverts if the balance is insufficient via OpenZeppelin's `ERC20InsufficientBalance` custom error. The explicit check adds gas cost for a condition that would revert anyway.
-
-**Impact**: No security impact — this is a gas optimization. The explicit error message is more user-friendly than OZ's custom error, so this may be a deliberate UX choice.
-
-**Recommendation**: Acceptable as-is. If gas optimization is desired, remove the `balanceOf` check and rely on `burnFrom`'s internal revert. If kept, be aware it costs an additional external call (~2600 gas).
-
----
-
-### LOW-2: No `newImplementation` Validation in `_authorizeUpgrade` — **FIXED**
-
-**File**: `AjunaERC20.sol` line 89, `AjunaWrapper.sol` line 162
-**Severity**: Low
-**Status**: ✅ **FIXED**
-
-```solidity
-// BEFORE:
-function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {}
-function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
-
-// AFTER:
-function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {
-    require(newImplementation.code.length > 0, "AjunaERC20: implementation not a contract");
-}
-function _authorizeUpgrade(address newImplementation) internal override onlyOwner {
-    require(newImplementation.code.length > 0, "AjunaWrapper: implementation not a contract");
+function renounceOwnership() public override onlyOwner {
+    revert("AjunaWrapper: renouncing ownership disabled");
 }
 ```
 
-**Fix applied**: Both `_authorizeUpgrade()` functions now validate that `newImplementation` has deployed code, preventing accidental upgrades to EOAs or undeployed addresses.
+This is consistent with how the contract treats other irreversibles (e.g. `rescueToken` cannot drain the foreign asset, `_authorizeUpgrade` requires deployed code). If genuine "non-upgradability" is ever desired, a deliberate UUPS upgrade to a fixed implementation that pins `_authorizeUpgrade` to `revert()` is a more auditable path than `renounceOwnership`.
+
+A parallel consideration applies to `AjunaERC20`: it uses `AccessControl`, where `renounceRole` is the equivalent. The deployer's renunciation of `DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE` is part of the production checklist and is the intended terminal state — only override `renounceOwnership` on the Wrapper, not the role-renunciation paths on the ERC20.
 
 ---
 
-### LOW-3: `rescueToken` Can Rescue the wAJUN Token Itself — **FIXED**
+## 3. Carry-Over Findings (Accepted, Re-Reviewed)
 
-**File**: `AjunaWrapper.sol`, line 148
-**Severity**: Low
-**Status**: ✅ **FIXED**
+### MEDIUM-3 (carry-over): AjunaWrapper uses Ownable, AjunaERC20 uses AccessControl
 
-```solidity
-// BEFORE:
-require(tokenAddress != address(foreignAsset), "Cannot rescue locked foreign asset");
+Status: **Accepted**, still present. The asymmetry remains: a single owner key controls pause / rescue / upgrade on the wrapper, while the ERC20 has a hierarchical role system. Mitigation per [docs/SECURITY.md](docs/SECURITY.md) is to ensure the wrapper owner is a multisig with a timelock contract in front of it. This is now reinforced by MEDIUM-A and LOW-B above — the owner key is the highest-impact key in the entire system.
 
-// AFTER:
-require(tokenAddress != address(foreignAsset), "Cannot rescue locked foreign asset");
-require(tokenAddress != address(token), "Cannot rescue wAJUN token");
+### LOW-1 (carry-over): redundant `balanceOf` check in `withdraw`
+
+Status: **Accepted**. [AjunaWrapper.sol:107-110](contracts/AjunaWrapper.sol#L107-L110) checks `token.balanceOf(msg.sender) >= amount` before calling `burnFrom`. `burnFrom` would revert anyway with OZ's `ERC20InsufficientBalance` custom error. The explicit string error is more user-friendly; the gas cost is one external `staticcall` (~2.6k gas). No security impact.
+
+### LOW-5 (carry-over): ERC20 approval front-running
+
+Status: **Accepted**, industry-standard. Mitigated at the dApp layer ([frontend/app.html](frontend/app.html)) by using "approve to 0, then approve to N" when changing a non-zero allowance. This is acceptable — front-running an approval requires an attacker to be a wAJUN spender authorized by the user, which by definition is the wrapper itself, which has no ability to abuse the allowance.
+
+---
+
+## 4. Architecture Re-Assessment
+
+### Mint-and-Lock invariant holds
+
+`wAJUN.totalSupply() == AJUN.balanceOf(wrapper)` is preserved by every code path in the contract:
+
+| Path | Δ totalSupply | Δ locked AJUN | Net |
+|------|---------------|---------------|-----|
+| `deposit(N)` | +N | +N | invariant maintained |
+| `withdraw(N)` | −N | −N | invariant maintained |
+| `rescueToken(foreignAsset, ...)` | — | blocked | guard at [L148](contracts/AjunaWrapper.sol#L148) |
+| `rescueToken(token, ...)` | — | — | blocked at [L149](contracts/AjunaWrapper.sol#L149) |
+| `rescueToken(other, ...)` | — | — | unrelated |
+| Direct AJUN transfer to wrapper | — | +N | over-collateralized (safe) |
+| Pause / unpause | frozen | frozen | invariant frozen |
+| UUPS upgrade | — | — | preserved by proxy storage |
+
+The only way to break the invariant from contract logic alone is via a UUPS upgrade that introduces a malicious code path — which requires the wrapper owner key. This re-emphasizes the importance of multisig + timelock for the owner.
+
+### CEI ordering
+
+`deposit` does external `transferFrom` before internal `mint`; `withdraw` does internal `burnFrom` before external `transfer`. Both are protected by `nonReentrant`. The deposit ordering is not strict checks-effects-interactions, but with the reentrancy guard it is correct: a re-entrant call is mutex-blocked, and the `mint` cannot run before `transferFrom` completes. The reentrancy test at [test/wrapper.test.ts:813-844](test/wrapper.test.ts#L813-L844) using [ReentrantToken.sol](contracts/mocks/ReentrantToken.sol) explicitly exercises this and passes.
+
+### UUPS upgrade authorization
+
+Both contracts implement `_authorizeUpgrade` correctly:
+- [AjunaERC20.sol:86-88](contracts/AjunaERC20.sol#L86-L88): `onlyRole(UPGRADER_ROLE)` + `code.length > 0`
+- [AjunaWrapper.sol:162-164](contracts/AjunaWrapper.sol#L162-L164): `onlyOwner` + `code.length > 0`
+
+`upgradeToAndCall` (inherited from OZ `UUPSUpgradeable`) additionally calls `proxiableUUID()` on the new implementation via `ERC1967Utils.upgradeToAndCallUUPS`, so the `code.length > 0` check is layered defense rather than the only check. EOA upgrades and non-UUPS upgrades are both rejected — this is verified by the upgrade-EOA tests at [test/wrapper.test.ts:506-518](test/wrapper.test.ts#L506-L518).
+
+### Storage-layout safety under upgrade
+
+OZ Contracts Upgradeable v5 uses **ERC-7201 namespaced storage** for inherited base contracts. Each base lives at a hashed slot, eliminating cross-base collision. Derived state on `AjunaERC20` and `AjunaWrapper` therefore starts at slot 0 and is followed by `__gap` reserves of 49 and 48 slots respectively. This is correct and verified by the V2 migration tests at [test/wrapper.test.ts:520-605](test/wrapper.test.ts#L520-L605).
+
+---
+
+## 5. Attack Surface Matrix
+
+### Untrusted-caller paths (any EOA / contract)
+
+| Vector | Mechanism | Mitigation |
+|--------|-----------|------------|
+| Mint without authorization | Call `AjunaERC20.mint` | `onlyRole(MINTER_ROLE)` — only the wrapper holds it |
+| Burn without authorization | Call `AjunaERC20.burnFrom` | `onlyRole(MINTER_ROLE)` + `_spendAllowance` (allowance from holder required) |
+| Reentrancy on deposit | Malicious foreign-asset `transferFrom` callback | `nonReentrant` modifier — verified by mock-attacker test |
+| Reentrancy on withdraw | Malicious foreign-asset `transfer` callback | `nonReentrant` modifier |
+| Withdraw without backing | Call `withdraw(N)` with no wAJUN | balance check + `burnFrom` reverts |
+| Withdraw without approval | Call `withdraw(N)` with no wAJUN approval | `_spendAllowance` reverts |
+| Re-initialize the proxy | Call `initialize` again | `initializer` modifier (one-shot) |
+| Initialize the implementation directly | Call `initialize` on impl contract | `_disableInitializers()` in constructor |
+| Upgrade without authorization | Call `upgradeToAndCall` | `UPGRADER_ROLE` / `onlyOwner` + `code.length > 0` + `proxiableUUID()` |
+| Front-run approval | Standard ERC20 race | dApp uses "zero-then-set" pattern |
+| Flash-loan / leverage | Borrow AJUN, deposit, exit before repay | Not exploitable — wrap is 1:1, no yield, no price oracle |
+
+### Privileged-key paths
+
+| Key | Worst-case action | New finding |
+|-----|-------------------|-------------|
+| AjunaWrapper owner | Pause forever (DoS); rescue any non-AJUN/non-wAJUN token; **upgrade to malicious impl that drains everything**; **transfer ownership to wrong address** | M-A (1-step transfer) |
+| AjunaWrapper owner | **Renounce ownership and brick all admin levers** | L-B |
+| AjunaERC20 admin | Grant `MINTER_ROLE` to attacker → unlimited wAJUN minting (breaks invariant) | unchanged |
+| AjunaERC20 upgrader | Upgrade ERC20 to remove burn restriction → drain user wAJUN | unchanged |
+
+The wrapper-owner row is the highest concentration of risk in the system. Multisig + timelock is non-negotiable for production.
+
+---
+
+## 6. Operational / Deployment-Time Findings
+
+### INFO-A: Hardhat config silently falls back to a zero PRIVATE_KEY
+
+**File**: [hardhat.config.ts:11](hardhat.config.ts#L11)
+
+```typescript
+const PRIVATE_KEY = vars.has("PRIVATE_KEY")
+  ? vars.get("PRIVATE_KEY")
+  : "0x0000000000000000000000000000000000000000000000000000000000000000";
 ```
 
-**Fix applied**: `rescueToken()` now also blocks rescuing the wAJUN token, preventing any accidental invariant-breaking extraction.
+If an operator forgets to set `PRIVATE_KEY` and selects `polkadotMainnet`, the deploy attempts to sign with the zero key. This will fail at signing time, but the failure mode is opaque ("invalid signer"). Recommend failing fast at config-load time when the selected network is `polkadotMainnet` or `polkadotTestnet`:
 
----
-
-### LOW-4: No Maximum Decimals Validation — **FIXED**
-
-**File**: `AjunaERC20.sol`, `initialize()`, line 47
-**Severity**: Low
-**Status**: ✅ **FIXED**
-
-```solidity
-// BEFORE:
-_tokenDecimals = decimals_;
-
-// AFTER:
-require(decimals_ <= 18, "AjunaERC20: decimals exceed 18");
-_tokenDecimals = decimals_;
+```typescript
+if (!vars.has("PRIVATE_KEY") && process.env.HARDHAT_NETWORK?.startsWith("polkadot")) {
+  throw new Error("PRIVATE_KEY must be set for production/testnet networks. Run: npx hardhat vars set PRIVATE_KEY");
+}
 ```
 
-**Fix applied**: `initialize()` now rejects decimals greater than 18.
+### INFO-B: No on-chain timelock on owner / UPGRADER_ROLE
 
----
+[docs/SECURITY.md:380](docs/SECURITY.md#L380) lists "Timelock contract deployed in front of multisig (recommended: 24–48h delay)" as a hardening item. As of this review the project does not provide a Timelock deployment script. For production, a `TimelockController` (OpenZeppelin) in front of the multisig is the standard pattern. Any UUPS upgrade — the most catastrophic privileged action in the system — should pass through the timelock so users have time to exit.
 
-### LOW-5: ERC20 Approval Front-Running (Standard Issue)
+### INFO-C: No real-time invariant monitor
 
-**Severity**: Low (Industry-Standard)
-
-The standard `approve()` function is susceptible to the well-known front-running attack: if a user changes an approval from N to M, a spender can front-run the `approve(M)` transaction, spend N, then spend M after the approval goes through.
-
-**Impact**: Standard ERC20 issue. OpenZeppelin v5 does NOT include `increaseAllowance`/`decreaseAllowance` anymore (they were removed). The mitigation is "approve to 0 first, then approve to N" at the application layer.
-
-**Recommendation**: Document this for users. The dApp UI should reset approval to 0 before setting a new value if the current allowance is non-zero.
-
----
-
-### INFO-1: Events in `deposit()` / `withdraw()` Don't Log Pre/Post State
-
-**Severity**: Informational
-
-The `Deposited` and `Withdrawn` events only log `user` and `amount`. For better off-chain monitoring, consider adding the user's resulting balance or the treasury's total locked amount:
+The invariant `totalSupply == balanceOf(wrapper)` is verified in the test suite but is not exposed as an on-chain view function. An off-chain monitor needs to make two RPC calls and compare. Adding an on-chain helper is cheap:
 
 ```solidity
-event Deposited(address indexed user, uint256 amount, uint256 newBalance, uint256 totalLocked);
+function isInvariantHealthy() external view returns (bool) {
+    return token.totalSupply() == foreignAsset.balanceOf(address(this));
+}
 ```
 
----
+This is informational — alerting infrastructure should still run off-chain checks, but a single-call view simplifies dashboards and on-chain liveness probes.
 
-### INFO-2: No `receive()` or `fallback()` Function
+### INFO-D: Existential-deposit reaping risk for the AJUN asset account
 
-**Severity**: Informational
+The wrapper holds AJUN as a `pallet-foreign-assets` account. If the wrapper's AJUN balance ever drops to zero (all users withdraw fully), the asset account is reaped and the next deposit may behave unexpectedly. [docs/PRODUCTION-CHECKLIST.md](docs/PRODUCTION-CHECKLIST.md) Phase 6B already mandates seeding the wrapper with permanent AJUN dust. This is sufficient — flagging here so the operational requirement isn't lost in a frontend/UI-focused sub-team.
 
-Neither contract has a `receive()` or `fallback()` function. This means native DOT (for gas) cannot be accidentally sent to the contract addresses. This is a **good thing** — it prevents accidental native token loss.
+### INFO-E: Single test file, but mock contracts are excluded from production deployment
 
-However, the Wrapper still needs an Existential Deposit (1–2 DOT) sent to it as a substrate-level balance. This is handled at the runtime level, not via Solidity. Make sure the ED is sent via a substrate extrinsic, not via `msg.value`.
-
----
-
-### INFO-3: `Proxy.sol` Exists Solely as an Artifact Import
-
-**Severity**: Informational
-
-```solidity
-import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-```
-
-This file exists only to force Hardhat to compile `ERC1967Proxy` so the artifact is available for deployment scripts. This is a valid pattern but could confuse auditors. Consider adding a comment to clarify (already partially present).
+[test/wrapper.test.ts](test/wrapper.test.ts) (61 tests) imports from [contracts/mocks/](contracts/mocks/). Those mock contracts (`AjunaERC20V2`, `AjunaWrapperV2`, `ReentrantToken`) compile alongside production contracts. They are not referenced by any deployment script and are not in the deploy path, but their bytecode is in the [artifacts/](artifacts/) tree. Recommend adding a comment in [contracts/mocks/](contracts/mocks/) that these are test-only, and ensuring no deployment script ever instantiates them on a live network. (The current scripts do not — verified.)
 
 ---
 
-### INFO-4: Storage Gap Sizing
+## 7. Test Coverage Re-Assessment
 
-**Severity**: Informational
+The suite is comprehensive (61 tests across deployment, deposit, withdraw, access control, pausable, rescue, multi-user, UUPS, ownership, role management, rescue edge cases, pause edge cases, zero-amount edge cases, reentrancy, event validation, and V2 migrations). The reentrancy test exercises a real attacker mock; the V2 upgrade tests exercise actual storage migration with `reinitializer(2)` and verify state preservation.
 
-- `AjunaERC20`: `__gap[49]` — 49 slots reserved after 1 custom variable (`_tokenDecimals`)
-- `AjunaWrapper`: `__gap[48]` — 48 slots reserved after 2 custom variables (`token`, `foreignAsset`)
+### Coverage gaps worth filling
 
-The total for each is 50 slots (variables + gap), which is the OpenZeppelin convention. This is correct.
-
----
-
-## 4. Invariant Analysis
-
-### Core Invariant
-
-$$\text{wAJUN.totalSupply()} = \text{AJUN.balanceOf(wrapper)}$$
-
-### Code Paths That Affect the Invariant
-
-| Code Path | Effect on totalSupply | Effect on Locked FA | Invariant |
-|-----------|----------------------|---------------------|-----------|
-| `deposit(N)` | +N (mint) | +N (transferFrom) | Maintained ✓ |
-| `withdraw(N)` | −N (burnFrom) | −N (transfer) | Maintained ✓ |
-| `rescueToken(foreignAsset, ...)` | unchanged | blocked by guard | Protected ✓ |
-| `rescueToken(wAJUN, ...)` | blocked by guard | unchanged | Protected ✓ |
-| `rescueToken(otherToken, ...)` | unchanged | unchanged | Unaffected ✓ |
-| Direct FA transfer to wrapper | unchanged | +N | Over-collateral ✓ |
-| Direct wAJUN transfer to wrapper | unchanged | unchanged | Unaffected |
-| UUPS upgrade | unchanged | unchanged | Preserved ✓ |
-| Pause | blocks deposit/withdraw | unchanged | Frozen ✓ |
-
-### Conclusion
-
-The invariant is maintained across all operations. With `updateForeignAsset()` removed and `rescueToken()` guarding both `foreignAsset` and `token`, there is no code path that can break the 1:1 backing.
-
----
-
-## 5. Attack Surface Analysis
-
-### External Attack Vectors
-
-| Attack | Vector | Mitigation | Status |
-|--------|--------|-----------|--------|
-| **Unauthorized minting** | Call `mint()` directly | `onlyRole(MINTER_ROLE)` — only Wrapper | ✓ Mitigated |
-| **Unauthorized burning** | Call `burnFrom()` directly | `onlyRole(MINTER_ROLE)` + `_spendAllowance` | ✓ Mitigated |
-| **Reentrancy on deposit** | Malicious `transferFrom` callback | `nonReentrant` modifier | ✓ Mitigated |
-| **Reentrancy on withdraw** | Malicious `transfer` callback | `nonReentrant` modifier | ✓ Mitigated |
-| **Drain via withdraw without tokens** | Call `withdraw(N)` without wAJUN | Balance check + `burnFrom` reverts | ✓ Mitigated |
-| **Drain via withdraw without approval** | Call `withdraw(N)` without approve | `_spendAllowance` reverts | ✓ Mitigated |
-| **Re-initialize proxy** | Call `initialize()` again | `initializer` modifier (one-shot) | ✓ Mitigated |
-| **Initialize implementation** | Call `initialize()` on impl contract | `_disableInitializers()` in constructor | ✓ Mitigated |
-| **Unauthorized upgrade** | Call `upgradeToAndCall()` | `UPGRADER_ROLE` / `onlyOwner` | ✓ Mitigated |
-| **Front-run approval** | Standard ERC20 approval race | Low severity, industry-standard issue | ⚡ Accepted |
-| **Flash loan attack** | Borrow FA → deposit → use wAJUN → withdraw → repay | No impact — 1:1 wrap is not leverageable | ✓ Not applicable |
-
-### Privileged Key Attack Vectors (Owner Compromise)
-
-| Attack | Requires | Impact |
-|--------|---------|--------|
-| Pause forever | Owner key | DoS — funds locked but not stolen |
-| Upgrade to malicious impl | Owner key | Full drainage — proxy state hijacked |
-| Update foreignAsset + rescue | Owner key | Drain treasury (MEDIUM-2) |
-| Grant MINTER_ROLE to attacker | Admin key | Unlimited wAJUN minting |
-| Upgrade ERC20 to remove burn restriction | Upgrader key | Drain user wAJUN |
-
-**Mitigation**: Transfer all privileged roles to a multisig with timelock. See post-deployment checklist.
-
----
-
-## 6. Precompile-Specific Considerations
-
-### Precompile Behavior vs Standard ERC20
-
-The contracts interact with `IERC20Precompile` which is a `pallet-assets` precompile, not a standard Solidity ERC20. Key differences:
-
-| Behavior | Standard ERC20 | Pallet-Assets Precompile |
-|----------|---------------|-------------------------|
-| `transfer` return value | `true` or revert | `true` or revert (same) |
-| `transferFrom` return value | `true` or revert | `true` or revert (same) |
-| Existential Deposit | N/A | Account may be reaped if balance < ED |
-| Decimal handling | Contract-defined | Pallet-defined |
-| Events | Solidity `Transfer` event | May differ or be absent |
-
-### Risk: Existential Deposit Reaping
-
-If the Wrapper's foreign asset balance drops below the pallet's Existential Deposit, the account could be "reaped" (balances zeroed). This would break the invariant.
-
-**Mitigation**: After deployment, send enough foreign asset tokens to the Wrapper to ensure it always stays above ED, even if all user tokens are withdrawn. Alternatively, ensure the first deposit is large enough.
-
-### Risk: Precompile Address Change
-
-If a runtime upgrade changes the asset ID or pallet instance, the precompile address changes. Since `foreignAsset` is now set-once in `initialize()`, updating the address requires a UUPS contract upgrade — a more auditable and deliberate process than the previously available `updateForeignAsset()` function call.
-
-**Mitigation**: Monitor runtime upgrades. Pause the contract, deploy a new implementation with the correct address, and upgrade via `upgradeToAndCall()`.
-
----
-
-## 7. Test Coverage Assessment
-
-| Area | Tests | Coverage |
-|------|-------|---------|
-| Deployment validation | 5 | ✓ Addresses, decimals, zero-address rejection |
-| Deposit (wrap) | 4 | ✓ Happy path, zero amount, no approval, invariant |
-| Withdraw (unwrap) | 5 | ✓ Happy path, zero amount, insufficient balance, no approval, invariant |
-| Access control | 4 | ✓ Non-minter blocked, deployer no mint, wrapper has mint |
-| Pausable | 4 | ✓ Paused deposit/withdraw blocked, unpause resumes, non-owner blocked |
-| Rescue | 3 | ✓ Rescue works, FA blocked, non-owner blocked |
-| Foreign asset update | 3 | ✓ Update works, zero blocked, non-owner blocked |
-| Multi-user | 1 | ✓ Interleaved wrap/unwrap maintains invariant |
-| UUPS | 8 | ✓ Re-init blocked, non-upgrader blocked, upgrade succeeds, state preserved, impl sealed |
-
-### Missing Test Coverage
-
-| Missing Test | Priority | Description |
-|-------------|----------|-------------|
-| `updateForeignAsset` + `rescueToken` bypass | High | Test the MEDIUM-2 attack path |
-| Max uint256 amounts | Low | Test with `type(uint256).max` to check overflow |
-| Rescue for wAJUN token | Low | Test `rescueToken(address(token), ...)` behavior |
-| Upgrade with migration function | Low | Test `upgradeToAndCall` with non-empty calldata |
-| Multiple MINTER_ROLE holders | Medium | Test behavior if a second minter is added |
-| Ownership transfer (2-step) | Medium | Test `transferOwnership` + `acceptOwnership` |
+| Test | Why | Priority |
+|------|-----|----------|
+| Owner accidentally calls `renounceOwnership` → all admin functions blocked | Validates LOW-B fix once applied | High (after fix) |
+| `transferOwnership(wrongAddress)` → original owner is locked out | Validates MEDIUM-A is real and motivates Ownable2Step | High |
+| Foreign asset returns `false` (no revert) on `transferFrom` | Validates LOW-A: current code does revert via require, but the path is exercised | Medium |
+| `upgradeToAndCall` to a non-UUPS contract (no `proxiableUUID`) | Validates the OZ-internal UUPS check | Low |
+| Max-uint deposit / withdraw | Overflow edge | Low |
 
 ---
 
 ## 8. Recommendations Summary
 
-### Fixed
+### Should fix before mainnet handoff to multisig
 
-| # | Finding | Fix Applied |
-|---|---------|-------------|
-| M-1 | `rescueToken` unchecked return value | ✅ Uses `SafeERC20.safeTransfer()` |
-| M-2 | `updateForeignAsset` + `rescueToken` bypass | ✅ `updateForeignAsset()` removed; `foreignAsset` set-once in `initialize()` |
-| L-2 | No implementation validation in `_authorizeUpgrade` | ✅ `code.length > 0` check added to both contracts |
-| L-3 | Rescue can extract wAJUN from wrapper | ✅ `tokenAddress != address(token)` guard added |
-| L-4 | No max decimals validation | ✅ `require(decimals_ <= 18)` added |
+| # | Finding | Action | Status |
+|---|---------|--------|--------|
+| M-A | 1-step `transferOwnership` is risky for the most powerful key in the system | Switched to `Ownable2StepUpgradeable` | ✅ Fixed |
+| L-B | `renounceOwnership` permanently bricks admin levers | Override to `revert()` | ✅ Fixed |
 
-### Accepted (No Change Needed)
+### Defense-in-depth, lower priority
 
-| # | Finding | Rationale |
-|---|---------|----------|
-| M-3 | Governance asymmetry (Ownable vs AccessControl) | Accepted — Wrapper owner should be a multisig+timelock in production |
-| L-1 | Redundant balance check in withdraw | Accepted — kept for better UX error messages |
-| L-5 | ERC20 approval front-running | Industry-standard; mitigated at dApp layer (approve to 0 first) |
-| I-1 | Events lack state context | Informational; current events are sufficient for indexing |
-| I-2 | No `receive()`/`fallback()` function | Intentional design — prevents accidental native token loss |
-| I-3 | `Proxy.sol` artifact import | Valid pattern; clarifying comment present |
-| I-4 | Storage gap sizing | Correct — follows 50-slot convention |
+| # | Finding | Action |
+|---|---------|--------|
+| L-A | Use `SafeERC20` consistently in `deposit` / `withdraw` | Two one-line changes; no behavior change vs current precompile |
+| INFO-A | Hardhat config silently falls back to zero key on production networks | Fail-fast guard in `hardhat.config.ts` |
+| INFO-B | No timelock | Deploy `TimelockController` between multisig and the wrapper / ERC20 admin actions |
+| INFO-C | No on-chain invariant view | Optional convenience function |
+
+### Documentation
+
+| File | Drift | Fix |
+|------|-------|-----|
+| [docs/SECURITY.md:128-138](docs/SECURITY.md#L128-L138) | Describes `acceptOwnership()` two-step flow that does not exist on current contract | Either implement Ownable2Step (preferred) or remove the `acceptOwnership` step from the doc |
 
 ---
 
-## 9. Overall Assessment
+## 9. Production-Readiness Verdict
 
-The contracts are well-structured, follow OpenZeppelin best practices, and all actionable findings from this review have been **resolved**. The UUPS upgrade pattern is correctly implemented with proper initializer guards, storage gaps, and role separation.
+The contracts themselves are **ready for mainnet deployment**. All prior critical and high-severity findings remain fixed, and the two new medium/low findings (M-A and L-B) identified in this review have been **fixed in code on the same day**:
 
-**All must-fix and should-fix findings are now addressed:**
-- M-1: `SafeERC20.safeTransfer()` applied
-- M-2: `updateForeignAsset()` removed entirely — `foreignAsset` is set-once
-- L-2: `_authorizeUpgrade()` validates implementation is a contract
-- L-3: `rescueToken()` blocks both `foreignAsset` and `token`
-- L-4: Decimals capped at 18
+- **M-A → fixed**: `AjunaWrapper` now inherits `Ownable2StepUpgradeable`. Multisig handoff requires the multisig to call `acceptOwnership()` before it takes effect — a typo or wrong-address mistake at `transferOwnership` time can be cancelled by re-calling with the correct address.
+- **L-B → fixed**: `renounceOwnership()` reverts for any caller. The wrapper's admin levers (pause, rescue, upgrade authorization) cannot be accidentally or maliciously discarded.
+- **Test suite**: 60 → 61 tests, with 4 ownership tests covering the new flows (2-step happy path, pending-transfer cancellation, non-owner rejection, renounce blocked for any caller).
 
-The remaining accepted findings (M-3, L-1, L-5) are operational concerns mitigated by production deployment practices (multisig, timelock, dApp-layer UX).
+Recommended sequence for the imminent mainnet rollout:
+1. ✅ Apply M-A and L-B in code — done.
+2. ✅ Update + re-run the full test suite — done (61/61 passing).
+3. Deploy the patched implementation as the **fresh** wrapper (this is a fresh production deploy, not an upgrade of an existing live contract).
+4. Run a smoke test: `transferOwnership(testAddress)` → confirm `pendingOwner() == testAddress` and `owner()` unchanged → `acceptOwnership()` from `testAddress` → confirm transfer completes → transfer back. This validates the 2-step flow on production before handing control to the multisig.
+5. Proceed with [docs/PRODUCTION-CHECKLIST.md](docs/PRODUCTION-CHECKLIST.md) Phases 8–11. The multisig handoff itself now benefits from the 2-step protection.
 
-The system is ready for production deployment with 38 tests covering all security-critical paths. Post-deployment, transfer all privileged roles to a multisig with timelock.
+The remaining open items (LOW-A: `SafeERC20` consistency in `deposit`/`withdraw`; INFO-A through INFO-E: operational concerns) are non-blocking for the production deploy and can be addressed in a follow-up upgrade if desired.

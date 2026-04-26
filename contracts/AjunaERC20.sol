@@ -83,7 +83,7 @@ contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlUpgradeable
     /**
      * @dev Restricts contract upgrades to accounts with UPGRADER_ROLE.
      */
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {
+    function _authorizeUpgrade(address newImplementation) internal view override onlyRole(UPGRADER_ROLE) {
         require(newImplementation.code.length > 0, "AjunaERC20: implementation not a contract");
     }
 

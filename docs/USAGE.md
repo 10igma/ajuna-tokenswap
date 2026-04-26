@@ -473,7 +473,6 @@ function initialize(address _token, address _foreignAssetPrecompile)
 // Events
 event Deposited(address indexed user, uint256 amount)
 event Withdrawn(address indexed user, uint256 amount)
-event ForeignAssetUpdated(address indexed oldAddress, address indexed newAddress)
 event TokenRescued(address indexed tokenAddress, address indexed to, uint256 amount)
 event Paused(address account)
 event Unpaused(address account)

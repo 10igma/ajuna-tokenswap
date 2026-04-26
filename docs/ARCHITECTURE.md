@@ -194,38 +194,56 @@ Implementation slot: 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505
 
 ## Storage Layout
 
-### AjunaERC20 Storage Map
+Both contracts inherit from OpenZeppelin Contracts Upgradeable v5, which uses
+**ERC-7201 namespaced storage** ("storage of structs at named slots"). Each
+inherited base contract stores its state in a single struct at a deterministic
+slot derived from a namespace string:
 
-| Slot Range | Owner Contract | Variables |
-|------------|---------------|-----------|
-| 0 | Initializable | `_initialized` (uint8), `_initializing` (bool) — packed |
-| 1 | ERC20Upgradeable | `_balances` mapping |
-| 2 | ERC20Upgradeable | `_allowances` mapping |
-| 3 | ERC20Upgradeable | `_totalSupply` (uint256) |
-| 4 | ERC20Upgradeable | `_name` (string) |
-| 5 | ERC20Upgradeable | `_symbol` (string) |
-| 6-55 | ERC20Upgradeable | `__gap[50]` |
-| 56 | AccessControlUpgradeable | `_roles` mapping |
-| 57-106 | AccessControlUpgradeable | `__gap[49]` |
-| 107 | UUPSUpgradeable | (no storage) |
-| 108 | **AjunaERC20** | `_tokenDecimals` (uint8) |
-| 109-157 | **AjunaERC20** | `__gap[49]` |
+```
+slot(namespace) = keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
+```
 
-### AjunaWrapper Storage Map
+Concrete consequences:
+- Inherited base contracts (`ERC20Upgradeable`, `AccessControlUpgradeable`,
+  `OwnableUpgradeable`, `PausableUpgradeable`, `ReentrancyGuardUpgradeable`,
+  `UUPSUpgradeable`, `Initializable`) do **not** occupy sequential slots in
+  the derived contract. They live at hashed, non-overlapping namespaces.
+- The derived contract (`AjunaERC20` / `AjunaWrapper`) has full use of slots
+  starting at `0` for its own state.
+- The `__gap` arrays therefore only need to cover **future state added to the
+  derived contract**, not the inherited bases.
 
-| Slot Range | Owner Contract | Variables |
-|------------|---------------|-----------|
-| 0 | Initializable | `_initialized`, `_initializing` |
-| 1 | OwnableUpgradeable | `_owner` (address) |
-| 2-51 | OwnableUpgradeable | `__gap[49]` |
-| 52 | ReentrancyGuardUpgradeable | `_status` (uint256) |
-| 53-102 | ReentrancyGuardUpgradeable | `__gap[49]` |
-| 103 | PausableUpgradeable | `_paused` (bool) |
-| 104-153 | PausableUpgradeable | `__gap[49]` |
-| 154 | UUPSUpgradeable | (no storage) |
-| 155 | **AjunaWrapper** | `token` (address) |
-| 156 | **AjunaWrapper** | `foreignAsset` (address) |
-| 157-204 | **AjunaWrapper** | `__gap[48]` |
+### AjunaERC20 (derived storage, slots starting at 0)
+
+| Slot Range | Variable | Type | Source |
+|------------|----------|------|--------|
+| 0 | `_tokenDecimals` | `uint8` | `AjunaERC20` |
+| 1 – 49 | `__gap[49]` | `uint256[49]` | `AjunaERC20` (forward-compat reserve) |
+
+Inherited state lives at namespaced slots, e.g. (informational):
+
+| Namespace | Holds |
+|-----------|-------|
+| `openzeppelin.storage.Initializable` | `_initialized`, `_initializing` |
+| `openzeppelin.storage.ERC20` | balances, allowances, total supply, name, symbol |
+| `openzeppelin.storage.AccessControl` | role mappings |
+
+### AjunaWrapper (derived storage, slots starting at 0)
+
+| Slot Range | Variable | Type | Source |
+|------------|----------|------|--------|
+| 0 | `token` | `AjunaERC20` (address) | `AjunaWrapper` |
+| 1 | `foreignAsset` | `IERC20Precompile` (address) | `AjunaWrapper` |
+| 2 – 49 | `__gap[48]` | `uint256[48]` | `AjunaWrapper` (forward-compat reserve) |
+
+Inherited state lives at namespaced slots, e.g. (informational):
+
+| Namespace | Holds |
+|-----------|-------|
+| `openzeppelin.storage.Initializable` | `_initialized`, `_initializing` |
+| `openzeppelin.storage.Ownable` | `_owner` |
+| `openzeppelin.storage.ReentrancyGuard` | `_status` |
+| `openzeppelin.storage.Pausable` | `_paused` |
 
 ---
 
@@ -367,7 +385,6 @@ interface IERC20Precompile {
 |-------|-----------|------|
 | `Deposited` | `user` (indexed), `amount` | After successful wrap |
 | `Withdrawn` | `user` (indexed), `amount` | After successful unwrap |
-| `ForeignAssetUpdated` | `oldAddress` (indexed), `newAddress` (indexed) | Precompile address changed |
 | `TokenRescued` | `tokenAddress` (indexed), `to` (indexed), `amount` | Stray tokens rescued |
 | `Paused` | `account` | Contract paused (from PausableUpgradeable) |
 | `Unpaused` | `account` | Contract unpaused |
@@ -392,7 +409,7 @@ interface IERC20Precompile {
 
 ```
 Level 1: Hardhat In-Memory EVM
-  ├── 37 unit tests (test/wrapper.test.ts)
+  ├── 61 unit tests (test/wrapper.test.ts)
   ├── Mock Foreign Asset (deployed in test setup)
   ├── Proxy deployment helpers (deployERC20Proxy, deployWrapperProxy)
   └── Tests: deployment, deposit, withdraw, access, pause, rescue, UUPS
@@ -463,7 +480,7 @@ ajuna-tokenswap/
 │       └── IERC20Precompile.sol        # Foreign Asset ERC20 interface
 │
 ├── test/
-│   └── wrapper.test.ts                 # 37 unit tests (Hardhat in-memory)
+│   └── wrapper.test.ts                 # 61 unit tests (Hardhat in-memory)
 │
 ├── scripts/
 │   ├── setup_node.sh                   # Build revive-dev-node from source

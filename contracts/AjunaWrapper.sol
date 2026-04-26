@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -27,7 +27,7 @@ import "./interfaces/IERC20Precompile.sol";
  *      - foreignAsset address set once in initialize(); change via UUPS upgrade if needed
  *      - UUPS upgradeability for bug-fix deployments (owner-only)
  */
-contract AjunaWrapper is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable, UUPSUpgradeable {
+contract AjunaWrapper is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
     /// @notice The wrapped ERC20 token (wAJUN) managed by this treasury.
@@ -61,6 +61,7 @@ contract AjunaWrapper is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
         require(_token != address(0), "AjunaWrapper: token is zero address");
         require(_foreignAssetPrecompile != address(0), "AjunaWrapper: precompile is zero address");
         __Ownable_init(msg.sender);
+        __Ownable2Step_init();
         __ReentrancyGuard_init();
         __Pausable_init();
         __UUPSUpgradeable_init();
@@ -153,13 +154,28 @@ contract AjunaWrapper is Initializable, OwnableUpgradeable, ReentrancyGuardUpgra
     }
 
     // ──────────────────────────────────────────────
+    //  Ownership Hardening
+    // ──────────────────────────────────────────────
+
+    /**
+     * @notice Disabled. The wrapper relies on a live owner for pause, rescue, and
+     *         upgrade authorization. Renouncing would permanently brick every admin
+     *         lever on a treasury that holds user funds.
+     * @dev    Use the two-step transferOwnership / acceptOwnership flow inherited
+     *         from Ownable2StepUpgradeable to hand off control to a multisig.
+     */
+    function renounceOwnership() public pure override {
+        revert("AjunaWrapper: renouncing ownership is disabled");
+    }
+
+    // ──────────────────────────────────────────────
     //  Upgrade Authorization
     // ──────────────────────────────────────────────
 
     /**
      * @dev Restricts contract upgrades to the owner.
      */
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {
+    function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
         require(newImplementation.code.length > 0, "AjunaWrapper: implementation not a contract");
     }
 

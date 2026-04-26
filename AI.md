@@ -50,7 +50,7 @@ Deployment and config:
 - `ignition/modules/AjunaWrapper.ts`: optional Ignition-based deployment module.
 
 Testing and simulation:
-- `test/wrapper.test.ts`: comprehensive test suite, currently 60 tests.
+- `test/wrapper.test.ts`: comprehensive test suite, currently 61 tests.
 - `scripts/e2e_test.ts`: end-to-end integration script.
 - `scripts/e2e_local.sh`: local automated pipeline.
 - `chopsticks.yml`: Asset Hub fork config for production-like testing.

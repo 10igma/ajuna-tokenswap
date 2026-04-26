@@ -83,7 +83,7 @@ ajuna-tokenswap/
 │   └── interfaces/
 │       └── IERC20Precompile.sol # Foreign Asset interface
 ├── test/
-│   └── wrapper.test.ts          # Comprehensive test suite (60 tests)
+│   └── wrapper.test.ts          # Comprehensive test suite (61 tests)
 ├── ignition/
 │   └── modules/
 │       └── AjunaWrapper.ts      # Deployment module
@@ -161,10 +161,6 @@ Expected output:
       ✔ should rescue accidentally sent tokens
       ✔ should NOT allow rescuing the locked foreign asset
       ✔ should only allow owner to rescue
-    Foreign Asset Update
-      ✔ should allow owner to update foreign asset address
-      ✔ should reject zero address
-      ✔ should reject non-owner
     Multi-User
       ✔ should handle interleaved wrap/unwrap from two users
     UUPS Upgradeability
@@ -177,7 +173,7 @@ Expected output:
       ✔ should preserve balances after AjunaWrapper upgrade
       ✔ should prevent calling initialize on implementation directly
 
-  60 passing
+  61 passing
 ```
 
 ### Test Coverage
@@ -201,7 +197,7 @@ The project uses a layered testing approach because the local dev node and produ
 
 | Level | Environment | Foreign Asset | Precompile | Best For |
 |-------|-------------|--------------|------------|----------|
-| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 60 tests |
+| **1. Unit** | Hardhat in-memory EVM | Mock ERC20 | No | Contract logic, 61 tests |
 | **2. PVM Integration** | Local `revive-dev-node` | Mock ERC20 | No | PVM bytecode compat, gas |
 | **3. Chopsticks Fork** | Forked AssetHub state | **Real** | **Yes** | Production-like testing |
 | **4. Testnet** | Polkadot Hub TestNet | **Real** (via XCM) | **Yes** | Full production path |
@@ -426,7 +422,7 @@ await wrapper.withdraw(amount);
 - **Reentrancy protection** (`ReentrancyGuard`) on all state-changing user functions
 - **Pausable** circuit breaker — owner can freeze all operations in an emergency
 - **Token rescue** — owner can recover accidentally sent tokens (but not the locked foreign asset)
-- **Mutable foreign asset address** — owner can update the precompile address if it changes with a runtime upgrade
+- **Immutable foreign asset address** — set once at initialization; if the precompile address ever needs to change, deploy a new implementation via UUPS upgrade (prevents an owner key compromise from redirecting the wrapper to a malicious token)
 - **Initializer validation** — rejects zero addresses, prevents re-initialization
 - **Implementation sealed** — `_disableInitializers()` in constructor prevents initializing the implementation directly
 

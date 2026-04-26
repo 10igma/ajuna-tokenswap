@@ -610,31 +610,71 @@ describe("AjunaWrapper System", function () {
   // ═══════════════════════════════════════════════════════════
 
   describe("Ownership Transfer", function () {
-    it("should transfer ownership via 2-step process", async function () {
-      // OwnableUpgradeable uses transferOwnership (1-step in OZ v5 Ownable)
-      await wrapper.connect(owner).transferOwnership(user.address);
+    it("should transfer ownership via 2-step process (transferOwnership + acceptOwnership)", async function () {
+      // Step 1: current owner proposes — does not yet change owner()
+      await expect(wrapper.connect(owner).transferOwnership(user.address))
+        .to.emit(wrapper, "OwnershipTransferStarted")
+        .withArgs(owner.address, user.address);
 
-      // In OZ v5 OwnableUpgradeable, transferOwnership is immediate (not 2-step)
+      // Pending state: owner unchanged, pendingOwner set
+      expect(await wrapper.owner()).to.equal(owner.address);
+      expect(await (wrapper as any).pendingOwner()).to.equal(user.address);
+
+      // Old owner still has full power until acceptance
+      await wrapper.connect(owner).pause();
+      await wrapper.connect(owner).unpause();
+
+      // Random caller cannot accept
+      await expect((wrapper as any).connect(user2).acceptOwnership()).to.be.reverted;
+      // Old owner cannot accept on behalf of new owner
+      await expect((wrapper as any).connect(owner).acceptOwnership()).to.be.reverted;
+
+      // Step 2: pending owner accepts — ownership transfers
+      await (wrapper as any).connect(user).acceptOwnership();
       expect(await wrapper.owner()).to.equal(user.address);
+      expect(await (wrapper as any).pendingOwner()).to.equal(ZERO_ADDRESS);
 
-      // Verify old owner can no longer act
+      // Old owner can no longer act
       await expect(wrapper.connect(owner).pause()).to.be.reverted;
 
-      // Verify new owner can act
+      // New owner can act
       await wrapper.connect(user).pause();
       expect(await wrapper.paused()).to.be.true;
     });
 
-    it("should prevent transferring ownership to zero address", async function () {
-      await expect(
-        wrapper.connect(owner).transferOwnership(ZERO_ADDRESS)
-      ).to.be.reverted;
+    it("should allow cancelling a pending ownership transfer (Ownable2Step)", async function () {
+      // Initiate transfer
+      await wrapper.connect(owner).transferOwnership(user.address);
+      expect(await (wrapper as any).pendingOwner()).to.equal(user.address);
+
+      // Owner cancels by transferring to zero — Ownable2Step explicitly allows this
+      await wrapper.connect(owner).transferOwnership(ZERO_ADDRESS);
+      expect(await (wrapper as any).pendingOwner()).to.equal(ZERO_ADDRESS);
+
+      // Original owner remains
+      expect(await wrapper.owner()).to.equal(owner.address);
+
+      // Previously pending account cannot accept anything
+      await expect((wrapper as any).connect(user).acceptOwnership()).to.be.reverted;
     });
 
     it("should prevent non-owner from transferring ownership", async function () {
       await expect(
         wrapper.connect(user).transferOwnership(user2.address)
       ).to.be.reverted;
+    });
+
+    it("should block renounceOwnership for any caller", async function () {
+      await expect(wrapper.connect(owner).renounceOwnership())
+        .to.be.revertedWith("AjunaWrapper: renouncing ownership is disabled");
+      await expect(wrapper.connect(user).renounceOwnership())
+        .to.be.revertedWith("AjunaWrapper: renouncing ownership is disabled");
+
+      // Owner unchanged
+      expect(await wrapper.owner()).to.equal(owner.address);
+      // Owner can still act
+      await wrapper.connect(owner).pause();
+      expect(await wrapper.paused()).to.be.true;
     });
   });
 

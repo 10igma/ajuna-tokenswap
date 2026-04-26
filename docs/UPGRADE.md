@@ -232,25 +232,46 @@ UUPS proxies delegate all storage to the proxy. The implementation defines the *
 
 ### Storage Slot Reference
 
-```
-AjunaERC20 Storage Layout:
-  Slot 0:    _initialized, _initializing (Initializable)
-  Slot 1-4:  ERC20Upgradeable (_balances, _allowances, _totalSupply, _name, _symbol)
-  Slot 5-X:  AccessControlUpgradeable (_roles)
-  Slot X+1:  UUPSUpgradeable (no additional storage)
-  Slot X+2:  _tokenDecimals (uint8)
-  Slot X+3.. __gap[49]
+OpenZeppelin Contracts Upgradeable v5 uses **ERC-7201 namespaced storage**:
+each inherited base contract keeps its state in a single struct at a
+deterministic slot derived from a namespace string, computed as
+`keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))`.
 
-AjunaWrapper Storage Layout:
-  Slot 0:    _initialized, _initializing (Initializable)
-  Slot 1:    OwnableUpgradeable (_owner)
-  Slot 2:    ReentrancyGuardUpgradeable (_status)
-  Slot 3:    PausableUpgradeable (_paused)
-  Slot 4:    UUPSUpgradeable (no additional storage)
-  Slot 5:    token (AjunaERC20)
-  Slot 6:    foreignAsset (IERC20Precompile)
-  Slot 7..   __gap[48]
+That means inherited base contracts (`ERC20Upgradeable`, `AccessControlUpgradeable`,
+`OwnableUpgradeable`, `PausableUpgradeable`, `ReentrancyGuardUpgradeable`,
+`UUPSUpgradeable`, `Initializable`) do not occupy sequential slots in the
+derived contract — they live at non-overlapping hashed slots. The derived
+contract has full use of slots starting at `0` for its own state.
+
 ```
+AjunaERC20 (derived state, slots 0..):
+  Slot 0:        _tokenDecimals (uint8)
+  Slot 1..49:    __gap[49]      (reserved for future AjunaERC20 state)
+
+  Inherited (namespaced, do not collide with derived slots):
+  - Initializable           (openzeppelin.storage.Initializable)
+  - ERC20Upgradeable        (openzeppelin.storage.ERC20)
+  - AccessControlUpgradeable (openzeppelin.storage.AccessControl)
+  - UUPSUpgradeable         (openzeppelin.storage.UUPSUpgradeable)
+
+AjunaWrapper (derived state, slots 0..):
+  Slot 0:        token         (AjunaERC20)
+  Slot 1:        foreignAsset  (IERC20Precompile)
+  Slot 2..49:    __gap[48]     (reserved for future AjunaWrapper state)
+
+  Inherited (namespaced, do not collide with derived slots):
+  - Initializable                (openzeppelin.storage.Initializable)
+  - OwnableUpgradeable           (openzeppelin.storage.Ownable)
+  - ReentrancyGuardUpgradeable   (openzeppelin.storage.ReentrancyGuard)
+  - PausableUpgradeable          (openzeppelin.storage.Pausable)
+  - UUPSUpgradeable              (openzeppelin.storage.UUPSUpgradeable)
+```
+
+**Practical rule for upgrades**: when adding new state to a derived contract,
+add the new variable(s) immediately before `__gap` and shrink `__gap` by the
+number of slots used. The `__gap` exists purely to reserve room for future
+**derived-contract** state — it does not pad inherited base contracts (those
+are already isolated by their namespaces).
 
 ---
 
