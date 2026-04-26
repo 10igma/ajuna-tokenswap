@@ -29,7 +29,6 @@
     "@nomicfoundation/hardhat-ignition-ethers": "^3.0.7",
     "@openzeppelin/hardhat-upgrades": "^3.9.1",
     "@parity/hardhat-polkadot": "^0.2.7",
-    "@parity/resolc": "^0.2.0",
     "@polkadot/api": "^16.5.4",
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",

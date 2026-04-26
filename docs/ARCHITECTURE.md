@@ -116,10 +116,10 @@ Initializable
 
 ```
 Initializable
-├── OwnableUpgradeable         (owner for admin functions)
-├── ReentrancyGuardUpgradeable (mutex on deposit/withdraw)
-├── PausableUpgradeable        (circuit breaker)
-└── UUPSUpgradeable            (_authorizeUpgrade with onlyOwner)
+├── Ownable2StepUpgradeable   (two-step transfer; renounceOwnership disabled)
+├── ReentrancyGuard           (stateless, OZ ≥5.6; ERC-7201 namespaced)
+├── PausableUpgradeable       (circuit breaker)
+└── UUPSUpgradeable           (stateless re-export, OZ ≥5.6; onlyOwner upgrade auth)
 ```
 
 **Custom state:**
@@ -194,10 +194,10 @@ Implementation slot: 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505
 
 ## Storage Layout
 
-Both contracts inherit from OpenZeppelin Contracts Upgradeable v5, which uses
-**ERC-7201 namespaced storage** ("storage of structs at named slots"). Each
-inherited base contract stores its state in a single struct at a deterministic
-slot derived from a namespace string:
+Both contracts inherit from OpenZeppelin Contracts v5 (with the upgradeable
+package on top), which uses **ERC-7201 namespaced storage** ("storage of
+structs at named slots"). Each inherited base contract stores its state in a
+single struct at a deterministic slot derived from a namespace string:
 
 ```
 slot(namespace) = keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
@@ -205,9 +205,14 @@ slot(namespace) = keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~by
 
 Concrete consequences:
 - Inherited base contracts (`ERC20Upgradeable`, `AccessControlUpgradeable`,
-  `OwnableUpgradeable`, `PausableUpgradeable`, `ReentrancyGuardUpgradeable`,
+  `Ownable2StepUpgradeable`, `PausableUpgradeable`, `ReentrancyGuard`,
   `UUPSUpgradeable`, `Initializable`) do **not** occupy sequential slots in
   the derived contract. They live at hashed, non-overlapping namespaces.
+- As of OZ 5.6, `ReentrancyGuard` and `UUPSUpgradeable` are **stateless**
+  in the sense that they have no init function — both use namespaced
+  storage at fixed slots, so no `__init` call is required (and none exists).
+  They are imported from `@openzeppelin/contracts` rather than the
+  upgradeable package.
 - The derived contract (`AjunaERC20` / `AjunaWrapper`) has full use of slots
   starting at `0` for its own state.
 - The `__gap` arrays therefore only need to cover **future state added to the

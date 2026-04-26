@@ -166,7 +166,7 @@ preserved by such an upgrade; renouncing ownership would discard them.
 
 ## Reentrancy Protection
 
-Both `deposit()` and `withdraw()` on AjunaWrapper are protected by `ReentrancyGuardUpgradeable`:
+Both `deposit()` and `withdraw()` on AjunaWrapper are protected by `ReentrancyGuard` (OpenZeppelin's stateless guard from `@openzeppelin/contracts/utils/ReentrancyGuard.sol`, namespaced storage at `openzeppelin.storage.ReentrancyGuard`):
 
 ```solidity
 function deposit(uint256 amount) external nonReentrant whenNotPaused { ... }

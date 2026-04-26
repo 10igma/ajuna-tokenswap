@@ -59,10 +59,10 @@ Comprehensive documentation for the Ajuna Token Swap system: a UUPS-upgradeable 
 | Property | Value |
 |----------|-------|
 | Solidity version | 0.8.28 |
-| OpenZeppelin version | 5.4.0 (+ upgradeable) |
+| OpenZeppelin version | 5.6.1 (+ upgradeable) |
 | Target runtime | pallet-revive (RISC-V via resolc) |
 | Token decimals | 12 (matches native AJUN) |
 | Proxy pattern | UUPS (ERC1967Proxy) |
-| Unit tests | 60 (including 10 UUPS-specific) |
+| Unit tests | 61 (including 13 UUPS-specific and 4 ownership) |
 | Local chain ID | 420420420 |
 | Testnet chain ID | 420420417 |

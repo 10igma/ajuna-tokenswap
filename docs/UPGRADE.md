@@ -232,16 +232,24 @@ UUPS proxies delegate all storage to the proxy. The implementation defines the *
 
 ### Storage Slot Reference
 
-OpenZeppelin Contracts Upgradeable v5 uses **ERC-7201 namespaced storage**:
-each inherited base contract keeps its state in a single struct at a
+OpenZeppelin Contracts v5 uses **ERC-7201 namespaced storage**: each
+inherited base contract keeps its state in a single struct at a
 deterministic slot derived from a namespace string, computed as
 `keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))`.
 
 That means inherited base contracts (`ERC20Upgradeable`, `AccessControlUpgradeable`,
-`OwnableUpgradeable`, `PausableUpgradeable`, `ReentrancyGuardUpgradeable`,
+`Ownable2StepUpgradeable`, `PausableUpgradeable`, `ReentrancyGuard`,
 `UUPSUpgradeable`, `Initializable`) do not occupy sequential slots in the
 derived contract — they live at non-overlapping hashed slots. The derived
 contract has full use of slots starting at `0` for its own state.
+
+As of OZ 5.6, `ReentrancyGuard` and `UUPSUpgradeable` are **stateless**:
+they have no init function and live at fixed namespaced slots. They are
+imported from `@openzeppelin/contracts` rather than `@openzeppelin/contracts-upgradeable`,
+which simplifies inheritance without compromising upgrade safety. Pre-5.6
+projects that used `ReentrancyGuardUpgradeable` migrate cleanly: the
+namespace string `openzeppelin.storage.ReentrancyGuard` is identical, so
+the storage slot does not move.
 
 ```
 AjunaERC20 (derived state, slots 0..):
@@ -260,11 +268,11 @@ AjunaWrapper (derived state, slots 0..):
   Slot 2..49:    __gap[48]     (reserved for future AjunaWrapper state)
 
   Inherited (namespaced, do not collide with derived slots):
-  - Initializable                (openzeppelin.storage.Initializable)
-  - OwnableUpgradeable           (openzeppelin.storage.Ownable)
-  - ReentrancyGuardUpgradeable   (openzeppelin.storage.ReentrancyGuard)
-  - PausableUpgradeable          (openzeppelin.storage.Pausable)
-  - UUPSUpgradeable              (openzeppelin.storage.UUPSUpgradeable)
+  - Initializable           (openzeppelin.storage.Initializable)
+  - Ownable2StepUpgradeable  (openzeppelin.storage.Ownable, openzeppelin.storage.Ownable2Step)
+  - ReentrancyGuard         (openzeppelin.storage.ReentrancyGuard)
+  - PausableUpgradeable     (openzeppelin.storage.Pausable)
+  - UUPSUpgradeable         (openzeppelin.storage.UUPSUpgradeable)
 ```
 
 **Practical rule for upgrades**: when adding new state to a derived contract,

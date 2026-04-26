@@ -46,7 +46,6 @@ contract AjunaERC20 is Initializable, ERC20Upgradeable, AccessControlUpgradeable
         require(decimals_ <= 18, "AjunaERC20: decimals exceed 18");
         __ERC20_init(name_, symbol_);
         __AccessControl_init();
-        __UUPSUpgradeable_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(UPGRADER_ROLE, admin);
         _tokenDecimals = decimals_;

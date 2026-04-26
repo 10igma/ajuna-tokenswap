@@ -82,7 +82,7 @@ Large dependency tree:
 `AjunaWrapper`:
 - Treasury contract that receives AJUN and issues wAJUN.
 - UUPS upgradeable.
-- `OwnableUpgradeable`, `PausableUpgradeable`, `ReentrancyGuardUpgradeable`.
+- `Ownable2StepUpgradeable` (two-step transfer; `renounceOwnership` is overridden to revert), `PausableUpgradeable`, `ReentrancyGuard` (stateless, OZ ≥5.6).
 - `deposit(amount)` transfers AJUN from user to wrapper, then mints wAJUN.
 - `withdraw(amount)` burns wAJUN from user, then transfers AJUN back.
 
