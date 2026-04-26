@@ -1,0 +1,25 @@
+Note: Reinitializers are not included in validations by default
+
+    contracts/mocks/AjunaERC20V2.sol:16: If you want to validate this function as an initializer, annotate it with '@custom:oz-upgrades-validate-as-initializer'
+
+Note: Reinitializers are not included in validations by default
+
+    contracts/mocks/AjunaWrapperV2.sol:16: If you want to validate this function as an initializer, annotate it with '@custom:oz-upgrades-validate-as-initializer'
+
+ ✔  contracts/AjunaERC20.sol:AjunaERC20
+
+ ✘  contracts/AjunaWrapper.sol:AjunaWrapper
+
+      @openzeppelin/contracts/utils/ReentrancyGuard.sol:58: Contract `ReentrancyGuard` has a constructor
+          Define an initializer instead
+          https://zpl.in/upgrades/error-001
+
+ ✔  contracts/mocks/AjunaERC20V2.sol:AjunaERC20V2
+
+ ✘  contracts/mocks/AjunaWrapperV2.sol:AjunaWrapperV2
+
+      @openzeppelin/contracts/utils/ReentrancyGuard.sol:58: Contract `ReentrancyGuard` has a constructor
+          Define an initializer instead
+          https://zpl.in/upgrades/error-001
+
+FAILED (4 upgradeable contracts detected, 2 passed, 2 failed)

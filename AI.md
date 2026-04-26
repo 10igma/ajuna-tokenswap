@@ -49,7 +49,7 @@ Deployment and config:
 - `hardhat.config.ts`: Hardhat network configuration for local, testnet, and mainnet.
 
 Testing and simulation:
-- `test/wrapper.test.ts`: comprehensive test suite, currently 91 tests.
+- `test/wrapper.test.ts`: comprehensive test suite, currently 119 tests (112 in `test/wrapper.test.ts` + 7 in `test/audit/`).
 - `scripts/e2e_test.ts`: end-to-end integration script.
 - `scripts/e2e_local.sh`: local automated pipeline.
 - `chopsticks.yml`: Asset Hub fork config for production-like testing.
@@ -137,11 +137,12 @@ Hardhat networks currently configured:
 | --- | --- | --- |
 | `local` | `420420420` | local `revive-dev-node` or eth-rpc adapter |
 | `polkadotTestnet` | `420420417` | Polkadot Hub TestNet |
-| `polkadotMainnet` | `420420420` | Polkadot Asset Hub production |
+| `polkadotMainnet` | `420420419` | Polkadot Asset Hub production |
 
 RPCs of interest:
 - Production WebSocket: `wss://polkadot-asset-hub-rpc.polkadot.io`
-- Production EVM RPC: `https://polkadot-asset-hub-eth-rpc.polkadot.io`
+- Production EVM RPC: `https://eth-rpc.polkadot.io/` (Parity-hosted; chain ID 420420419)
+- Production block explorer: `https://blockscout.polkadot.io/`
 - Westend Asset Hub WebSocket: `wss://westend-asset-hub-rpc.polkadot.io`
 
 ## Local Development Model

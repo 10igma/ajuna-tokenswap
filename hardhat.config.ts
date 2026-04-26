@@ -33,6 +33,11 @@ const config: HardhatUserConfig = {
         enabled: true,
         runs: 200,
       },
+      outputSelection: {
+        "*": {
+          "*": ["storageLayout"],
+        },
+      },
     },
   },
   networks: {
@@ -46,14 +51,33 @@ const config: HardhatUserConfig = {
         gas: 6000000,
         timeout: 60000,
     },
+    // Chopsticks-forked Polkadot Asset Hub. Same URL as `local` (the
+    // eth-rpc adapter still listens on 8545) but the chain ID matches
+    // forked Asset Hub mainnet (420420419), NOT revive-dev-node's
+    // 420420420. Use this network for `chopsticks_rehearsal.sh` and any
+    // pre-mainnet dry-run.
+    chopsticks: {
+        url: "http://127.0.0.1:8545",
+        chainId: 420420419,
+        // Alith — chopsticks_rehearsal.ts funds this address with DOT
+        // via dev_setStorage during Phase 2.
+        accounts: ["0x5fb92d6e98884f76de468fa3f6278f8807c48bebc13595d45af5bdc4da702133"],
+        gasPrice: 50000000000,
+        gas: 6000000,
+        timeout: 120000,
+    },
     polkadotTestnet: {
         url: 'https://services.polkadothub-rpc.com/testnet',
         chainId: 420420417, // Polkadot Hub TestNet per official docs
         accounts: [PRIVATE_KEY],
     },
     polkadotMainnet: {
-        url: 'https://polkadot-asset-hub-eth-rpc.polkadot.io',
-        chainId: 420420420, // Polkadot AssetHub Mainnet
+        // Canonical Polkadot Asset Hub mainnet eth-RPC (Parity-hosted).
+        // Verified via `eth_chainId` against the live endpoint: 420420419.
+        // Block explorer: https://blockscout.polkadot.io/
+        // Substrate WSS:  wss://polkadot-asset-hub-rpc.polkadot.io
+        url: 'https://eth-rpc.polkadot.io/',
+        chainId: 420420419,
         accounts: [PRIVATE_KEY],
     }
   },

@@ -113,7 +113,7 @@ const configs: Record<string, EnvConfig> = {
    */
   chopsticks: {
     name: "Chopsticks (AssetHub Fork)",
-    chainId: 420420420, // Chopsticks inherits the forked chain ID
+    chainId: 420420419, // Inherits Polkadot Asset Hub mainnet's eth-RPC chain ID
     rpcUrl: "http://127.0.0.1:8545",
     decimals: 12,
     symbol: "wAJUN",
@@ -142,8 +142,8 @@ const configs: Record<string, EnvConfig> = {
    */
   production: {
     name: "Polkadot AssetHub (Production)",
-    chainId: 420420420,
-    rpcUrl: "https://polkadot-asset-hub-eth-rpc.polkadot.io",
+    chainId: 420420419,
+    rpcUrl: "https://eth-rpc.polkadot.io/",
     decimals: 12,
     symbol: "wAJUN",
     foreignAssetAddress: "", // Run: npx ts-node scripts/lookup_ajun_asset.ts

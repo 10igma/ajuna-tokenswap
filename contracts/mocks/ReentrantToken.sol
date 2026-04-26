@@ -14,6 +14,12 @@ contract ReentrantToken is ERC20 {
 
     constructor() ERC20("Reentrant", "REENT") {}
 
+    /// @dev 12 to match the test wAJUN's decimals so AjunaWrapper.initialize
+    ///      passes its coherence check (audit ATS-08 enforcement).
+    function decimals() public pure override returns (uint8) {
+        return 12;
+    }
+
     function setTarget(address _target) external {
         target = _target;
     }

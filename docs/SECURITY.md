@@ -84,9 +84,27 @@ the standard single-step `grantRole` / `revokeRole` flow.
 
 | Role | Hash | Granted To | Permissions |
 |------|------|-----------|-------------|
-| `DEFAULT_ADMIN_ROLE` | `0x00` | Exactly one address (deployer initially) | Grant/revoke `MINTER_ROLE` / `UPGRADER_ROLE`. **Transfer is two-step with a delay.** |
-| `MINTER_ROLE` | `keccak256("MINTER_ROLE")` | AjunaWrapper proxy | `mint()`, `burnFrom()` |
+| `DEFAULT_ADMIN_ROLE` | `0x00` | Exactly one address (deployer initially) | Grant/revoke `UPGRADER_ROLE`; **call `bindMinter` once**. **Transfer is two-step with a delay.** |
+| `MINTER_ROLE` | `keccak256("MINTER_ROLE")` | AjunaWrapper proxy (via `bindMinter`) | `mint()`, `burnFrom()` |
 | `UPGRADER_ROLE` | `keccak256("UPGRADER_ROLE")` | Deployer (initially) | `upgradeTo()`, `upgradeToAndCall()` |
+
+### `MINTER_ROLE` is bound to a single address
+
+Audit ATS-04 ([audit/REPORT.md](../audit/REPORT.md)) flagged the unenforced
+coupling between `wrapper.owner()` and `erc20.defaultAdmin()`: a divergent
+ERC20 admin could grant `MINTER_ROLE` to themselves and mint unbacked wAJUN.
+
+The fix is on-chain: `AjunaERC20` exposes a one-shot
+`bindMinter(address)` callable by `DEFAULT_ADMIN_ROLE`. It atomically sets
+`boundMinter = wrapperProxy` and grants `MINTER_ROLE` to that address.
+Subsequent grants of `MINTER_ROLE` to any address other than `boundMinter`
+revert with `"AjunaERC20: MINTER_ROLE bound to a single address"`. The
+deploy script (`scripts/deploy_wrapper.ts`) calls `bindMinter` immediately
+after wrapper deployment.
+
+The bound address is the **wrapper proxy**, which is stable across UUPS
+upgrades — only the wrapper's implementation changes, not its address. So
+`bindMinter` does not constrain future wrapper logic upgrades.
 
 ### Key Design Decisions
 
@@ -494,6 +512,8 @@ If the precompile address ever needs to change (e.g., asset ID reassignment), th
 | **Storage collision on upgrade** | Medium | Use `__gap` correctly; test upgrade with OpenZeppelin plugin |
 | **Front-running approval** | Low | Standard ERC20 issue; use `increaseAllowance` pattern |
 | **Wrapper receives tokens directly** | Low | Over-collateralizes invariant; no negative impact |
+| **PVM SELFDESTRUCT semantics** (audit ATS-10) | Informational | The `_authorizeUpgrade` check `newImplementation.code.length > 0` is a snapshot at upgrade time. On EVM-Cancun, EIP-6780 makes `SELFDESTRUCT` a no-op for non-creation-tx contracts, so a deployed implementation cannot be cleared. **`pallet-revive` is assumed to follow the same semantics**; the contract does not defensively re-check `extcodehash` post-upgrade. Verify against the runtime version targeted at deploy time. |
+| **PVM EIP-1153 (transient storage)** (audit ATS-09 follow-on) | Informational | The contract uses an inline reentrancy guard at the namespaced storage slot (not transient). No dependency on EIP-1153. A future migration to `ReentrancyGuardTransient` would require explicit verification of `pallet-revive` TSTORE/TLOAD support. |
 
 ---
 
@@ -504,7 +524,14 @@ Before going live, ensure:
 - [ ] All roles transferred to a **multisig** (3-of-5 or 4-of-7 recommended)
 - [ ] Deployer has **renounced** all privileged roles
 - [ ] **Existential deposit** sent to Wrapper proxy (1–2 DOT)
-- [ ] **Timelock contract** deployed in front of multisig (recommended: 24–48h delay)
+- [ ] **Timelock contract** deployed in front of multisig (recommended: 24–48h delay).
+      The contract is `TimelockController` from OpenZeppelin; the deploy
+      script `scripts/deploy_timelock.ts` is in-repo and ready. The
+      ownership-handover procedure is `docs/PRODUCTION-CHECKLIST.md`
+      Phase 10B. **The timelock is intentionally NOT installed at deploy
+      time** — under the allowlist gate (Phases 4–10), only the team has
+      funds at risk, so a fast multisig owner is correct. Install the
+      timelock before flipping `setAllowlistEnabled(false)` in Phase 11.
 - [ ] **Monitoring** set up for:
   - `Deposited` / `Withdrawn` events (unusual volumes)
   - `Paused` / `Unpaused` events

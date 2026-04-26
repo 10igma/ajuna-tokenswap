@@ -24,6 +24,12 @@ contract FeeOnTransferERC20 is ERC20 {
 
     constructor() ERC20("Fee", "FEE") {}
 
+    /// @dev 12 to match the test wAJUN's decimals so AjunaWrapper.initialize
+    ///      passes its coherence check (audit ATS-08 enforcement).
+    function decimals() public pure override returns (uint8) {
+        return 12;
+    }
+
     function mintTo(address to, uint256 amount) external {
         _mint(to, amount);
     }

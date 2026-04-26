@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel in-progress runs of this workflow on the same branch when a newer
+# commit lands. Keeps PR feedback fast and avoids burning CI minutes on stale
+# diffs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # test — the audit baseline gate.
+  #
+  # Three checks must stay green for every commit on `main`:
+  #   1. `npx hardhat compile`   — contracts compile cleanly.
+  #   2. `npx hardhat test`      — full Hardhat test suite (currently 112).
+  #   3. `npx --yes @openzeppelin/upgrades-core validate artifacts/build-info`
+  #      — OZ upgrades-core validate. Catches regressions of audit ATS-09
+  #      (the "ReentrancyGuard parent constructor" issue) and any future
+  #      upgrade-safety violation.
+  # ─────────────────────────────────────────────────────────────────────
+  test:
+    name: Compile / Test / OZ Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Hardhat compile
+        run: npx hardhat compile
+
+      - name: Hardhat test
+        run: npx hardhat test
+
+      - name: OpenZeppelin upgrades-core validate
+        run: npx --yes @openzeppelin/upgrades-core validate artifacts/build-info
+
+  # ─────────────────────────────────────────────────────────────────────
+  # slither — static analysis baseline.
+  #
+  # `fail-on: high` means any high-severity finding fails CI. Medium and
+  # below are reported but do not fail. The current baseline has zero
+  # high-severity findings (audit confirmed). The known intentional
+  # strict-equality on `isInvariantHealthy` is suppressed via a per-line
+  # `// slither-disable-next-line incorrect-equality` annotation in source.
+  #
+  # `naming-convention` is excluded globally because the codebase uses the
+  # OpenZeppelin convention (leading underscore for `_token`,
+  # `_foreignAssetPrecompile`, `__gap`, etc.) which slither flags as
+  # non-mixedCase.
+  # ─────────────────────────────────────────────────────────────────────
+  slither:
+    name: Slither static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          target: '.'
+          fail-on: high
+          slither-args: '--exclude naming-convention'

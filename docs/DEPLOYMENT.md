@@ -62,10 +62,10 @@ console.log(cfg.decimals);             // 12
 
 | Environment | Chain ID | RPC URL | Foreign Asset |
 |-------------|----------|---------|---------------|
-| `local` | 420420420 | `http://127.0.0.1:8545` | Mock ERC20 (deployed) |
+| `local` | 420420420 | `http://127.0.0.1:8545` | Mock ERC20 (deployed; revive-dev-node) |
 | `testnet` | 420420417 | `https://services.polkadothub-rpc.com/testnet` | Real precompile |
-| `chopsticks` | 420420420 | `http://127.0.0.1:8545` | Real precompile (forked) |
-| `production` | 420420420 | `https://polkadot-asset-hub-eth-rpc.polkadot.io` | Real precompile |
+| `chopsticks` | 420420419 | `http://127.0.0.1:8545` | Real precompile (forked from Polkadot AH mainnet) |
+| `production` | 420420419 | `https://eth-rpc.polkadot.io/` | Real precompile (Polkadot AH mainnet) |
 
 ### Hardhat Networks
 
@@ -84,8 +84,8 @@ networks: {
     accounts: [vars.get("PRIVATE_KEY", "...")]
   },
   polkadotMainnet: {
-    url: "https://polkadot-asset-hub-eth-rpc.polkadot.io",
-    chainId: 420420420,
+    url: "https://eth-rpc.polkadot.io/",
+    chainId: 420420419,
     accounts: [vars.get("PRIVATE_KEY", "...")]
   }
 }
@@ -107,7 +107,7 @@ No deployment needed — Hardhat's in-memory EVM handles everything:
 npx hardhat test
 ```
 
-All 91 tests run against mock contracts, including UUPS proxy deployment patterns.
+All 119 tests (112 in `wrapper.test.ts` + 7 audit PoC regression tests in `test/audit/`) run against mock contracts, including UUPS proxy deployment patterns.
 
 ---
 

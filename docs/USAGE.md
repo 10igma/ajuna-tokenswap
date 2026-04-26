@@ -308,12 +308,13 @@ A wallet-connected swap interface for end users.
 
 ### MetaMask Network Configuration
 
-| Field | Local Dev Node | Polkadot Hub TestNet |
-|-------|---------------|---------------------|
-| Network Name | AssetHub Local | AssetHub TestNet |
-| RPC URL | `http://127.0.0.1:8545` | `https://services.polkadothub-rpc.com/testnet` |
-| Chain ID | `420420420` | `420420417` |
-| Currency Symbol | `DOT` | `DOT` |
+| Field | Local Dev Node | Polkadot Hub TestNet | Polkadot Hub (Mainnet) |
+|-------|---------------|---------------------|------------------------|
+| Network Name | AssetHub Local | AssetHub TestNet | Polkadot Hub |
+| RPC URL | `http://127.0.0.1:8545` | `https://services.polkadothub-rpc.com/testnet` | `https://eth-rpc.polkadot.io/` |
+| Chain ID | `420420420` | `420420417` | `420420419` |
+| Currency Symbol | `DOT` | `DOT` | `DOT` |
+| Block Explorer | n/a | n/a | `https://blockscout.polkadot.io/` |
 
 ### Wrap Workflow
 

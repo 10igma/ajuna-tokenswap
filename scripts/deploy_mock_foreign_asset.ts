@@ -34,7 +34,8 @@ async function main() {
     "Mock AJUN Foreign Asset",
     "AJUN",
     deployer.address, // admin
-    12                // decimals — must match production AJUN
+    12,               // decimals — must match production AJUN
+    0,                // initialAdminDelay — instant for the local mock
   ]);
   const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
   const proxy = await ProxyFactory.deploy(await impl.getAddress(), initData);
