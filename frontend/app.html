@@ -374,6 +374,60 @@
         .token-input, .output-value { font-size: 1.4em; }
       }
 
+      /* ── Status banner (allowlist / pause / chain) ─ */
+      .status-banner {
+        background: rgba(251, 191, 36, 0.08);
+        border: 1px solid rgba(251, 191, 36, 0.35);
+        color: #fbbf24;
+        border-radius: var(--radius);
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        font-size: 0.88em;
+        line-height: 1.45;
+      }
+      .status-banner.error {
+        background: rgba(239, 68, 68, 0.08);
+        border-color: rgba(239, 68, 68, 0.4);
+        color: #fca5a5;
+      }
+      .status-banner.ok {
+        background: rgba(34, 197, 94, 0.08);
+        border-color: rgba(34, 197, 94, 0.35);
+        color: #86efac;
+      }
+      .status-banner strong { color: inherit; }
+      .status-banner code {
+        background: rgba(255,255,255,0.06);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.95em;
+      }
+      .status-banner.hidden { display: none; }
+
+      /* ── Invariant badge (footer) ─────────── */
+      .invariant-row {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        align-items: center;
+        font-size: 0.78em;
+        color: var(--ajuna-text-muted);
+        margin-top: 8px;
+      }
+      .invariant-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 10px;
+        border-radius: 9999px;
+        font-weight: 600;
+      }
+      .invariant-badge.healthy { background: rgba(34,197,94,0.12); color: #86efac; }
+      .invariant-badge.under   { background: rgba(239,68,68,0.15); color: #fca5a5; }
+      .invariant-badge.over    { background: rgba(98,144,175,0.15); color: var(--ajuna-secondary); }
+      .invariant-badge.unknown { background: rgba(113,113,122,0.18); color: var(--ajuna-text-muted); }
+
       /* ── No-wallet message ──────────────── */
       .no-wallet {
         background: var(--ajuna-surface);
@@ -432,6 +486,9 @@
           </div>
           <div class="wallet-native" id="walletNative">0 DOT</div>
         </div>
+
+        <!-- Status banner (network / pause / allowlist gate) -->
+        <div class="status-banner hidden" id="statusBanner"></div>
 
         <!-- How-It-Works Guide -->
         <div class="info-banner" id="guideWrap">
@@ -570,7 +627,18 @@
       <!-- Footer -->
       <div class="footer">
         <p>
-          1:1 backed &mdash; wAJUN is always fully backed by locked AJUN in the treasury contract.<br />
+          wAJUN is 1:1 backed by AJUN locked in the treasury contract.
+        </p>
+        <div class="invariant-row">
+          <span>Backing:</span>
+          <span class="invariant-badge unknown" id="invariantBadge">—</span>
+          <span id="invariantDetail"></span>
+        </div>
+        <p style="margin-top:10px;">
+          <a id="explorerLinkWrapper" href="#" target="_blank">Wrapper</a>
+          &middot;
+          <a id="explorerLinkErc20" href="#" target="_blank">wAJUN</a>
+          &middot;
           <a href="https://github.com/AjunaNetwork" target="_blank">GitHub</a>
           &middot;
           <a href="https://ajuna.io" target="_blank">Ajuna Network</a>
@@ -581,23 +649,43 @@
     <script>
       // ════════════════════════════════════════════
       //  CONFIGURATION
-      //  Update these after deployment.
+      //
+      //  Defaults below are the live Polkadot Asset Hub mainnet deployment.
+      //  Override any field via URL params for testnet / chopsticks / local:
+      //    ?wrapper=0x..&erc20=0x..&foreign=0x..&chainId=420420420&rpc=http://...
       // ════════════════════════════════════════════
       const CONFIG = {
-        // ─ Contract addresses (set after deployment) ───
-        WRAPPER_ADDRESS:  "",   // AjunaWrapper treasury
-        ERC20_ADDRESS:    "",   // AjunaERC20 (wAJUN)
-        FOREIGN_ADDRESS:  "",   // Foreign Asset precompile address
+        // ─ Contract addresses (Polkadot Asset Hub mainnet) ───
+        WRAPPER_ADDRESS:  "0xdc05685e80925dD500A454ee632225C2742b4477",
+        ERC20_ADDRESS:    "0xBf41e5a78030770479eC0fd93ecFF31b5320319c",
+        FOREIGN_ADDRESS:  "0x0000002d00000000000000000000000002200000",
 
-        // ─ Network ────────────────────────────────────
-        // Local revive-dev-node: 420420420
-        // Polkadot Hub TestNet:  420420417
-        // Polkadot Hub Mainnet:  420420419  (https://eth-rpc.polkadot.io/)
-        CHAIN_ID:   420420420,
-        CHAIN_NAME: "Polkadot AssetHub",
-        RPC_URL:    "http://127.0.0.1:8545", // Change for testnet/mainnet
-        DECIMALS:   12,                      // Must match AJUN native decimals
+        // ─ Network (Polkadot Asset Hub mainnet via Parity eth-RPC) ─
+        CHAIN_ID:        420420419,
+        CHAIN_ID_HEX:    "0x190f1b43",
+        CHAIN_NAME:      "Polkadot Asset Hub",
+        NATIVE_SYMBOL:   "DOT",
+        RPC_URL:         "https://eth-rpc.polkadot.io/",
+        EXPLORER_URL:    "https://blockscout.polkadot.io",
+        DECIMALS:        12,
       };
+
+      // Apply URL-param overrides (handy for testnet / chopsticks / local).
+      (() => {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get("wrapper"))  CONFIG.WRAPPER_ADDRESS = p.get("wrapper");
+        if (p.get("erc20"))    CONFIG.ERC20_ADDRESS   = p.get("erc20");
+        if (p.get("foreign"))  CONFIG.FOREIGN_ADDRESS = p.get("foreign");
+        if (p.get("chainId")) {
+          const cid = parseInt(p.get("chainId"), 10);
+          if (!isNaN(cid)) {
+            CONFIG.CHAIN_ID = cid;
+            CONFIG.CHAIN_ID_HEX = "0x" + cid.toString(16);
+          }
+        }
+        if (p.get("rpc"))      CONFIG.RPC_URL = p.get("rpc");
+        if (p.get("explorer")) CONFIG.EXPLORER_URL = p.get("explorer");
+      })();
 
       // ─ ABIs ────────────────────────────────────
       const ERC20_ABI = [
@@ -605,6 +693,7 @@
         "function allowance(address owner, address spender) view returns (uint256)",
         "function approve(address spender, uint256 amount) returns (bool)",
         "function decimals() view returns (uint8)",
+        "function totalSupply() view returns (uint256)",
         "event Approval(address indexed owner, address indexed spender, uint256 value)",
       ];
 
@@ -613,6 +702,12 @@
         "function withdraw(uint256 amount)",
         "function token() view returns (address)",
         "function foreignAsset() view returns (address)",
+        "function owner() view returns (address)",
+        "function paused() view returns (bool)",
+        "function allowlistEnabled() view returns (bool)",
+        "function allowlisted(address) view returns (bool)",
+        "function isUnderCollateralized() view returns (bool)",
+        "function getInvariantDelta() view returns (int256)",
         "event Deposited(address indexed user, uint256 amount)",
         "event Withdrawn(address indexed user, uint256 amount)",
       ];
@@ -623,6 +718,13 @@
       let provider, signer, userAddress;
       let wrapperContract, erc20Contract, foreignContract;
       let decimals = CONFIG.DECIMALS;
+      const gateState = {
+        ownerAddr: null,        // wrapper.owner()
+        paused: false,
+        allowlistEnabled: true, // safe default until first read
+        meAllowlisted: false,
+        wrongChain: false,
+      };
 
       // ════════════════════════════════════════════
       //  INIT
@@ -662,8 +764,13 @@
           document.getElementById("connectSection").style.display = "none";
           document.getElementById("walletSection").style.display = "block";
 
+          await ensureCorrectChain();
           await updateNativeBalance();
           await initContracts();
+          await refreshGateState();
+          await refreshInvariant();
+          renderStatusBanner();
+          renderExplorerLinks();
           toast("Wallet connected", "success");
         } catch (e) {
           toast("Connection failed: " + e.message, "error");
@@ -672,11 +779,47 @@
         }
       }
 
+      async function ensureCorrectChain() {
+        try {
+          const net = await provider.getNetwork();
+          if (net.chainId === CONFIG.CHAIN_ID) {
+            gateState.wrongChain = false;
+            return;
+          }
+          gateState.wrongChain = true;
+          // Try to switch.
+          try {
+            await window.ethereum.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: CONFIG.CHAIN_ID_HEX }],
+            });
+            gateState.wrongChain = false;
+          } catch (switchErr) {
+            // 4902 = chain not yet added to the wallet.
+            if (switchErr && switchErr.code === 4902) {
+              try {
+                await window.ethereum.request({
+                  method: "wallet_addEthereumChain",
+                  params: [{
+                    chainId: CONFIG.CHAIN_ID_HEX,
+                    chainName: CONFIG.CHAIN_NAME,
+                    nativeCurrency: { name: CONFIG.NATIVE_SYMBOL, symbol: CONFIG.NATIVE_SYMBOL, decimals: 18 },
+                    rpcUrls: [CONFIG.RPC_URL],
+                    blockExplorerUrls: [CONFIG.EXPLORER_URL],
+                  }],
+                });
+                gateState.wrongChain = false;
+              } catch (_) { /* user declined; banner will explain */ }
+            }
+          }
+        } catch (_) {}
+      }
+
       async function updateNativeBalance() {
         try {
           const bal = await provider.getBalance(userAddress);
           document.getElementById("walletNative").textContent =
-            parseFloat(ethers.utils.formatEther(bal)).toFixed(4) + " DOT";
+            parseFloat(ethers.utils.formatEther(bal)).toFixed(4) + " " + CONFIG.NATIVE_SYMBOL;
         } catch (_) {}
       }
 
@@ -685,13 +828,8 @@
       // ════════════════════════════════════════════
       async function initContracts() {
         if (!CONFIG.WRAPPER_ADDRESS || !CONFIG.ERC20_ADDRESS || !CONFIG.FOREIGN_ADDRESS) {
-          toast("Contract addresses not configured. Edit CONFIG in app.html or use the URL params: ?wrapper=0x...&erc20=0x...&foreign=0x...", "info");
-          // Try URL params as fallback
-          const params = new URLSearchParams(window.location.search);
-          CONFIG.WRAPPER_ADDRESS = params.get("wrapper") || CONFIG.WRAPPER_ADDRESS;
-          CONFIG.ERC20_ADDRESS   = params.get("erc20")   || CONFIG.ERC20_ADDRESS;
-          CONFIG.FOREIGN_ADDRESS = params.get("foreign")  || CONFIG.FOREIGN_ADDRESS;
-          if (!CONFIG.WRAPPER_ADDRESS) return;
+          toast("Contract addresses not configured. Use ?wrapper=0x..&erc20=0x..&foreign=0x.. or edit CONFIG.", "info");
+          return;
         }
 
         try {
@@ -706,6 +844,119 @@
         } catch (e) {
           toast("Failed to load contracts: " + e.message, "error");
         }
+      }
+
+      // ════════════════════════════════════════════
+      //  GATE STATE  (allowlist / pause / owner)
+      // ════════════════════════════════════════════
+      async function refreshGateState() {
+        if (!wrapperContract || !userAddress) return;
+        try {
+          const [ownerAddr, paused, allowEnabled, isAllowed] = await Promise.all([
+            wrapperContract.owner(),
+            wrapperContract.paused(),
+            wrapperContract.allowlistEnabled(),
+            wrapperContract.allowlisted(userAddress),
+          ]);
+          gateState.ownerAddr        = ownerAddr;
+          gateState.paused           = paused;
+          gateState.allowlistEnabled = allowEnabled;
+          gateState.meAllowlisted    = isAllowed;
+        } catch (_) { /* keep previous state */ }
+      }
+
+      function isOwner() {
+        return gateState.ownerAddr &&
+          userAddress &&
+          gateState.ownerAddr.toLowerCase() === userAddress.toLowerCase();
+      }
+      function depositBlocked() {
+        if (gateState.wrongChain) return "wrong-chain";
+        if (gateState.paused)     return "paused";
+        if (gateState.allowlistEnabled && !isOwner() && !gateState.meAllowlisted) return "not-allowlisted";
+        return null;
+      }
+      function withdrawBlocked() {
+        if (gateState.wrongChain) return "wrong-chain";
+        if (gateState.paused)     return "paused";
+        return null; // contract never gates withdraw on allowlist
+      }
+
+      function renderStatusBanner() {
+        const el = document.getElementById("statusBanner");
+        const msgs = [];
+        let level = "warn";
+        if (gateState.wrongChain) {
+          level = "error";
+          msgs.push(`<strong>Wrong network.</strong> Please switch your wallet to <code>${CONFIG.CHAIN_NAME}</code> (chain ID ${CONFIG.CHAIN_ID}).`);
+        }
+        if (gateState.paused) {
+          level = "error";
+          msgs.push(`<strong>Wrapper paused.</strong> Deposits and withdrawals are temporarily halted by the contract owner.`);
+        }
+        if (gateState.allowlistEnabled && !isOwner() && !gateState.meAllowlisted && !gateState.wrongChain) {
+          msgs.push(`<strong>Restricted-access mode.</strong> The wrapper is in allowlist-gated rollout — only allowlisted addresses can wrap. Withdrawals are unaffected. Contact ops to be added.`);
+        }
+        if (gateState.allowlistEnabled && isOwner()) {
+          msgs.push(`<strong>You are the contract owner.</strong> Allowlist gate is currently <code>ON</code>. Use the <a href="admin.html" style="color:inherit;text-decoration:underline">admin page</a> to manage it.`);
+        }
+        if (msgs.length === 0) {
+          el.classList.add("hidden");
+          el.classList.remove("error", "ok");
+          return;
+        }
+        el.classList.remove("hidden", "error", "ok");
+        if (level === "error") el.classList.add("error");
+        el.innerHTML = msgs.join("<br><br>");
+      }
+
+      // ════════════════════════════════════════════
+      //  INVARIANT
+      // ════════════════════════════════════════════
+      async function refreshInvariant() {
+        const badge  = document.getElementById("invariantBadge");
+        const detail = document.getElementById("invariantDetail");
+        if (!wrapperContract || !erc20Contract || !foreignContract) return;
+        try {
+          const [supply, locked] = await Promise.all([
+            erc20Contract.totalSupply(),
+            foreignContract.balanceOf(CONFIG.WRAPPER_ADDRESS),
+          ]);
+          const delta = supply.sub(locked);
+          badge.classList.remove("healthy", "under", "over", "unknown");
+          if (delta.isZero()) {
+            badge.classList.add("healthy");
+            badge.textContent = "Healthy 1:1";
+            detail.textContent = "";
+          } else if (delta.gt(0)) {
+            badge.classList.add("under");
+            badge.textContent = "UNDER-BACKED";
+            detail.textContent = "+" + trimDecimals(ethers.utils.formatUnits(delta, decimals)) + " wAJUN unbacked";
+          } else {
+            badge.classList.add("over");
+            badge.textContent = "Over-collateralized";
+            detail.textContent = "+" + trimDecimals(ethers.utils.formatUnits(delta.mul(-1), decimals)) + " AJUN extra in treasury";
+          }
+        } catch (_) {
+          badge.classList.remove("healthy", "under", "over");
+          badge.classList.add("unknown");
+          badge.textContent = "—";
+          detail.textContent = "";
+        }
+      }
+
+      function renderExplorerLinks() {
+        const set = (id, addr) => {
+          const a = document.getElementById(id);
+          if (!a) return;
+          a.href = `${CONFIG.EXPLORER_URL}/address/${addr}`;
+        };
+        set("explorerLinkWrapper", CONFIG.WRAPPER_ADDRESS);
+        set("explorerLinkErc20",   CONFIG.ERC20_ADDRESS);
+      }
+
+      function txExplorerLink(hash) {
+        return `${CONFIG.EXPLORER_URL}/tx/${hash}`;
       }
 
       // ════════════════════════════════════════════
@@ -792,10 +1043,14 @@
       function updateButtonStates() {
         const wrapVal = document.getElementById("wrapInput").value;
         const unwrapVal = document.getElementById("unwrapInput").value;
-        document.getElementById("btnApproveWrap").disabled = !wrapVal || parseFloat(wrapVal) <= 0;
-        document.getElementById("btnWrap").disabled = !wrapVal || parseFloat(wrapVal) <= 0;
-        document.getElementById("btnApproveUnwrap").disabled = !unwrapVal || parseFloat(unwrapVal) <= 0;
-        document.getElementById("btnUnwrap").disabled = !unwrapVal || parseFloat(unwrapVal) <= 0;
+        const wrapBlock   = depositBlocked();
+        const unwrapBlock = withdrawBlocked();
+        const validWrap   = wrapVal && parseFloat(wrapVal) > 0;
+        const validUnwrap = unwrapVal && parseFloat(unwrapVal) > 0;
+        document.getElementById("btnApproveWrap").disabled = !validWrap   || !!wrapBlock;
+        document.getElementById("btnWrap").disabled        = !validWrap   || !!wrapBlock;
+        document.getElementById("btnApproveUnwrap").disabled = !validUnwrap || !!unwrapBlock;
+        document.getElementById("btnUnwrap").disabled        = !validUnwrap || !!unwrapBlock;
       }
 
       // ════════════════════════════════════════════
@@ -813,9 +1068,9 @@
 
         try {
           const tx = await foreignContract.approve(CONFIG.WRAPPER_ADDRESS, parsed);
-          toast("Transaction submitted. Waiting for confirmation…", "info");
+          toastTx("Approval submitted", tx.hash, "info");
           await tx.wait();
-          toast("AJUN approved! Now click Wrap.", "success");
+          toastTx("AJUN approved — now click Wrap.", tx.hash, "success");
           await refreshAllowances();
         } catch (e) {
           toast("Approval failed: " + (e.reason || e.message), "error");
@@ -837,12 +1092,13 @@
 
         try {
           const tx = await wrapperContract.deposit(parsed);
-          toast("Transaction submitted. Waiting for confirmation…", "info");
+          toastTx("Wrap submitted", tx.hash, "info");
           await tx.wait();
-          toast(`Wrapped ${amount} AJUN → wAJUN!`, "success");
+          toastTx(`Wrapped ${amount} AJUN → wAJUN`, tx.hash, "success");
           document.getElementById("wrapInput").value = "";
           document.getElementById("wrapOutput").textContent = "0.0";
           await refreshBalances();
+          await refreshInvariant();
           await updateNativeBalance();
         } catch (e) {
           toast("Wrap failed: " + (e.reason || e.message), "error");
@@ -867,9 +1123,9 @@
 
         try {
           const tx = await erc20Contract.approve(CONFIG.WRAPPER_ADDRESS, parsed);
-          toast("Transaction submitted. Waiting for confirmation…", "info");
+          toastTx("Approval submitted", tx.hash, "info");
           await tx.wait();
-          toast("wAJUN approved! Now click Unwrap.", "success");
+          toastTx("wAJUN approved — now click Unwrap.", tx.hash, "success");
           await refreshAllowances();
         } catch (e) {
           toast("Approval failed: " + (e.reason || e.message), "error");
@@ -891,12 +1147,13 @@
 
         try {
           const tx = await wrapperContract.withdraw(parsed);
-          toast("Transaction submitted. Waiting for confirmation…", "info");
+          toastTx("Unwrap submitted", tx.hash, "info");
           await tx.wait();
-          toast(`Unwrapped ${amount} wAJUN → AJUN!`, "success");
+          toastTx(`Unwrapped ${amount} wAJUN → AJUN`, tx.hash, "success");
           document.getElementById("unwrapInput").value = "";
           document.getElementById("unwrapOutput").textContent = "0.0";
           await refreshBalances();
+          await refreshInvariant();
           await updateNativeBalance();
         } catch (e) {
           toast("Unwrap failed: " + (e.reason || e.message), "error");
@@ -916,6 +1173,21 @@
         el.textContent = msg;
         container.appendChild(el);
         setTimeout(() => { el.remove(); }, type === "error" ? 8000 : 5000);
+      }
+      function toastTx(msg, hash, type = "info") {
+        const container = document.getElementById("toasts");
+        const el = document.createElement("div");
+        el.className = `toast toast-${type}`;
+        const a = document.createElement("a");
+        a.href = txExplorerLink(hash);
+        a.target = "_blank";
+        a.style.color = "inherit";
+        a.style.textDecoration = "underline";
+        a.textContent = "view tx";
+        el.textContent = msg + " — ";
+        el.appendChild(a);
+        container.appendChild(el);
+        setTimeout(() => { el.remove(); }, type === "error" ? 10000 : 6000);
       }
 
       function trimDecimals(str, maxDec = 6) {

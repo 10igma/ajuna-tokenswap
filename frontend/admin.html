@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ajuna Token Swap — Admin</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <style>
+      :root {
+        --ajuna-primary: #6290AF;
+        --ajuna-secondary: #7EC8EF;
+        --ajuna-success: #4ade80;
+        --ajuna-warning: #fbbf24;
+        --ajuna-error: #ef4444;
+        --ajuna-bg: #09090b;
+        --ajuna-surface: #18181b;
+        --ajuna-surface2: #27272a;
+        --ajuna-text: #f4f4f5;
+        --ajuna-text-muted: #71717a;
+        --ajuna-border: #27272a;
+        --radius: 12px;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--ajuna-bg);
+        color: var(--ajuna-text);
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+      }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: var(--ajuna-surface); }
+      ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 9999px; }
+
+      .app {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 20px 16px 60px;
+      }
+      .brand {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 0 8px;
+      }
+      .brand h1 {
+        font-size: 1.4em;
+        font-weight: 800;
+        color: var(--ajuna-primary);
+      }
+      .brand p {
+        color: var(--ajuna-text-muted);
+        font-size: 0.85em;
+        margin-top: 2px;
+      }
+      .brand a.user-link {
+        color: var(--ajuna-text-muted);
+        font-size: 0.85em;
+        text-decoration: none;
+      }
+      .brand a.user-link:hover { color: var(--ajuna-primary); }
+
+      .wallet-bar {
+        background: var(--ajuna-surface);
+        border: 1px solid var(--ajuna-border);
+        border-radius: var(--radius);
+        padding: 16px 20px;
+        margin: 16px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .wallet-info { overflow: hidden; min-width: 0; }
+      .wallet-label {
+        font-size: 0.72em;
+        color: var(--ajuna-text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .wallet-address {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.88em;
+        color: var(--ajuna-primary);
+      }
+      .wallet-role {
+        font-size: 0.75em;
+        color: var(--ajuna-text-muted);
+        margin-top: 2px;
+      }
+      .role-tag {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 9999px;
+        font-size: 0.92em;
+        font-weight: 600;
+        margin-right: 4px;
+      }
+      .role-tag.owner { background: rgba(98,144,175,0.18); color: var(--ajuna-secondary); }
+      .role-tag.admin { background: rgba(167,139,250,0.18); color: #c4b5fd; }
+      .role-tag.upgrader { background: rgba(251,191,36,0.18); color: #fbbf24; }
+      .role-tag.none  { background: rgba(113,113,122,0.18); color: var(--ajuna-text-muted); }
+
+      .btn {
+        padding: 10px 18px;
+        font-size: 0.95em;
+        font-weight: 700;
+        border: none;
+        border-radius: var(--radius);
+        cursor: pointer;
+        background: var(--ajuna-primary);
+        color: white;
+        transition: opacity 0.2s, transform 0.15s;
+      }
+      .btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+      .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+      .btn-sm  { padding: 6px 12px; font-size: 0.85em; }
+      .btn-secondary { background: #52525b; }
+      .btn-secondary:hover:not(:disabled) { background: #71717a; }
+      .btn-danger { background: var(--ajuna-error); }
+      .btn-danger:hover:not(:disabled) { background: #dc2626; }
+      .btn-warning { background: var(--ajuna-warning); color: #1f1300; }
+      .btn-warning:hover:not(:disabled) { background: #f59e0b; }
+
+      /* Health panel */
+      .health {
+        background: var(--ajuna-surface);
+        border: 1px solid var(--ajuna-border);
+        border-radius: var(--radius);
+        padding: 18px 20px;
+        margin-bottom: 16px;
+      }
+      .health h2 {
+        font-size: 0.95em;
+        color: var(--ajuna-primary);
+        margin-bottom: 12px;
+      }
+      .health-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 18px;
+      }
+      .health-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.88em;
+        padding: 4px 0;
+      }
+      .health-row .k { color: var(--ajuna-text-muted); }
+      .health-row .v {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        text-align: right;
+        word-break: break-all;
+        max-width: 60%;
+      }
+      .health-row .v.warn { color: var(--ajuna-warning); }
+      .health-row .v.ok   { color: var(--ajuna-success); }
+      .health-row .v.err  { color: var(--ajuna-error); }
+      .health-row .v a { color: inherit; text-decoration: underline; }
+
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        font-size: 0.85em;
+        font-weight: 600;
+      }
+      .badge.ok    { background: rgba(34,197,94,0.18); color: #86efac; }
+      .badge.warn  { background: rgba(251,191,36,0.18); color: #fbbf24; }
+      .badge.err   { background: rgba(239,68,68,0.18); color: #fca5a5; }
+
+      /* Tabs */
+      .tabs {
+        display: flex;
+        gap: 4px;
+        background: var(--ajuna-surface);
+        border-radius: var(--radius);
+        padding: 4px;
+        margin-bottom: 16px;
+        border: 1px solid var(--ajuna-border);
+        flex-wrap: wrap;
+      }
+      .tab {
+        flex: 1;
+        min-width: 120px;
+        padding: 10px;
+        text-align: center;
+        font-weight: 600;
+        font-size: 0.9em;
+        border: none;
+        background: transparent;
+        color: var(--ajuna-text-muted);
+        cursor: pointer;
+        border-radius: 10px;
+        transition: all 0.2s;
+      }
+      .tab.active {
+        background: var(--ajuna-primary);
+        color: white;
+      }
+
+      .panel {
+        background: var(--ajuna-surface);
+        border: 1px solid var(--ajuna-border);
+        border-radius: var(--radius);
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .panel.hidden { display: none; }
+      .panel h3 {
+        font-size: 1em;
+        color: var(--ajuna-primary);
+        margin-bottom: 4px;
+      }
+      .panel p.help {
+        color: var(--ajuna-text-muted);
+        font-size: 0.85em;
+        margin-bottom: 14px;
+        line-height: 1.45;
+      }
+      .panel-section {
+        padding: 14px 0;
+        border-top: 1px solid var(--ajuna-border);
+      }
+      .panel-section:first-of-type { border-top: none; padding-top: 0; }
+      .panel-section h4 {
+        font-size: 0.92em;
+        color: var(--ajuna-text);
+        margin-bottom: 10px;
+      }
+
+      .form-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .form-row input, .form-row textarea, .form-row select {
+        flex: 1;
+        min-width: 220px;
+        padding: 10px 12px;
+        background: var(--ajuna-surface2);
+        border: 1px solid var(--ajuna-border);
+        border-radius: 10px;
+        color: var(--ajuna-text);
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.88em;
+      }
+      .form-row textarea {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        min-height: 90px;
+        resize: vertical;
+      }
+      .form-row input::placeholder, .form-row textarea::placeholder { color: #52525b; }
+      .form-row .btn { white-space: nowrap; }
+
+      .lookup-result {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.85em;
+        color: var(--ajuna-text-muted);
+        padding: 8px 0;
+      }
+      .lookup-result.allowed { color: var(--ajuna-success); }
+      .lookup-result.denied  { color: var(--ajuna-warning); }
+
+      /* Toasts */
+      .toast-container {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 380px;
+      }
+      .toast {
+        padding: 14px 18px;
+        border-radius: 12px;
+        font-size: 0.88em;
+        animation: slideInRight 0.3s ease;
+        word-break: break-word;
+      }
+      .toast a { color: inherit; text-decoration: underline; }
+      .toast-info { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd; }
+      .toast-success { background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); color: #86efac; }
+      .toast-error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; }
+      .toast-pending { background: rgba(98,144,175,0.1); border: 1px solid rgba(98,144,175,0.3); color: #7EC8EF; }
+      @keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+
+      .status-banner {
+        background: rgba(251, 191, 36, 0.08);
+        border: 1px solid rgba(251, 191, 36, 0.35);
+        color: #fbbf24;
+        border-radius: var(--radius);
+        padding: 12px 16px;
+        margin-bottom: 16px;
+        font-size: 0.88em;
+        line-height: 1.45;
+      }
+      .status-banner.error { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+      .status-banner.hidden { display: none; }
+      .status-banner code {
+        background: rgba(255,255,255,0.06);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.95em;
+      }
+
+      .footer {
+        text-align: center;
+        padding: 24px 0;
+        font-size: 0.78em;
+        color: var(--ajuna-text-muted);
+      }
+      .footer a { color: var(--ajuna-primary); text-decoration: none; }
+      .footer a:hover { color: var(--ajuna-secondary); }
+
+      .spinner {
+        display: inline-block;
+        width: 12px; height: 12px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      @media (max-width: 720px) {
+        .health-grid { grid-template-columns: 1fr; }
+        .brand h1 { font-size: 1.15em; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="brand">
+        <div>
+          <h1>Ajuna Token Swap — Admin</h1>
+          <p>Owner / admin controls for the wrapper &amp; ERC20 contracts</p>
+        </div>
+        <a class="user-link" href="app.html">← User app</a>
+      </div>
+
+      <div id="connectSection">
+        <button class="btn" id="btnConnect" style="width:100%;padding:16px;font-size:1.05em" onclick="connectWallet()">
+          Connect Wallet
+        </button>
+      </div>
+
+      <div id="walletSection" style="display:none">
+        <div class="wallet-bar">
+          <div class="wallet-info">
+            <div class="wallet-label">Connected</div>
+            <div class="wallet-address" id="walletAddr">-</div>
+            <div class="wallet-role" id="walletRole"></div>
+          </div>
+          <div style="text-align:right">
+            <div class="wallet-label">Network</div>
+            <div class="wallet-address" id="walletNet">-</div>
+          </div>
+        </div>
+
+        <div class="status-banner hidden" id="statusBanner"></div>
+
+        <!-- Health panel -->
+        <div class="health">
+          <h2>Live state</h2>
+          <div class="health-grid">
+            <div class="health-row">
+              <span class="k">Wrapper proxy</span>
+              <span class="v"><a id="hExplorerWrapper" href="#" target="_blank">—</a></span>
+            </div>
+            <div class="health-row">
+              <span class="k">ERC20 (wAJUN) proxy</span>
+              <span class="v"><a id="hExplorerErc20" href="#" target="_blank">—</a></span>
+            </div>
+            <div class="health-row">
+              <span class="k">Foreign asset (AJUN)</span>
+              <span class="v"><a id="hExplorerForeign" href="#" target="_blank">—</a></span>
+            </div>
+            <div class="health-row">
+              <span class="k">Wrapper owner</span>
+              <span class="v" id="hOwner">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Wrapper pendingOwner</span>
+              <span class="v" id="hPendingOwner">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Token defaultAdmin</span>
+              <span class="v" id="hAdmin">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Token pendingAdmin</span>
+              <span class="v" id="hPendingAdmin">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Token boundMinter</span>
+              <span class="v" id="hMinter">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Allowlist gate</span>
+              <span class="v" id="hAllowlist">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Paused</span>
+              <span class="v" id="hPaused">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">wAJUN totalSupply</span>
+              <span class="v" id="hSupply">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">AJUN locked in wrapper</span>
+              <span class="v" id="hLocked">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">Backing invariant</span>
+              <span class="v" id="hInvariant">—</span>
+            </div>
+            <div class="health-row">
+              <span class="k">owner == defaultAdmin</span>
+              <span class="v" id="hCrossCheck">—</span>
+            </div>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="refreshAll()">Refresh</button>
+            <span style="font-size:0.78em;color:var(--ajuna-text-muted);align-self:center" id="lastRefreshed"></span>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="allowlist" onclick="switchTab('allowlist')">Allowlist</button>
+          <button class="tab" data-tab="pause" onclick="switchTab('pause')">Pause &amp; Rescue</button>
+          <button class="tab" data-tab="ownership" onclick="switchTab('ownership')">Wrapper ownership</button>
+          <button class="tab" data-tab="token" onclick="switchTab('token')">Token admin</button>
+        </div>
+
+        <!-- ═════════════ Allowlist tab ═════════════ -->
+        <div class="panel" data-panel="allowlist">
+          <h3>Allowlist gate</h3>
+          <p class="help">
+            While the gate is <code>ON</code>, only the <code>owner()</code> and explicitly-allowlisted addresses can <code>deposit</code>.
+            <code>withdraw</code> is never gated. Per <em>Phase 11</em> the multisig (via the timelock) flips this off to open to the public.
+          </p>
+
+          <div class="panel-section">
+            <h4>Toggle gate</h4>
+            <div class="form-row">
+              <button class="btn btn-warning" id="btnEnableGate"  onclick="setAllowlistEnabled(true)">Enable gate</button>
+              <button class="btn btn-warning" id="btnDisableGate" onclick="setAllowlistEnabled(false)">Disable gate (public mode)</button>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h4>Add / remove a single address</h4>
+            <div class="form-row">
+              <input type="text" id="alAddr" placeholder="0xabc… (target address)" />
+              <button class="btn" onclick="setAllowlist(true)">Add</button>
+              <button class="btn btn-secondary" onclick="setAllowlist(false)">Remove</button>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h4>Look up an address</h4>
+            <div class="form-row">
+              <input type="text" id="alLookup" placeholder="0xabc…" oninput="checkAllowlist()" />
+              <button class="btn btn-secondary" onclick="checkAllowlist()">Check</button>
+            </div>
+            <div class="lookup-result" id="alLookupResult"></div>
+          </div>
+
+          <div class="panel-section">
+            <h4>Batch add / remove (max 100 per tx)</h4>
+            <p class="help" style="margin-bottom:8px">
+              Paste comma- or newline-separated addresses. All entries get the same flag.
+            </p>
+            <div class="form-row">
+              <textarea id="alBatch" placeholder="0xabc…&#10;0xdef…&#10;0x123…"></textarea>
+            </div>
+            <div class="form-row">
+              <button class="btn" onclick="setAllowlistBatch(true)">Add batch</button>
+              <button class="btn btn-secondary" onclick="setAllowlistBatch(false)">Remove batch</button>
+              <span style="font-size:0.82em;color:var(--ajuna-text-muted);align-self:center" id="alBatchCount"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═════════════ Pause & Rescue ═════════════ -->
+        <div class="panel hidden" data-panel="pause">
+          <h3>Pause &amp; rescue</h3>
+          <p class="help">
+            <code>pause()</code> halts both <code>deposit</code> and <code>withdraw</code>. Reserved for incident response.
+            <code>rescueToken</code> recovers ERC20s mistakenly sent to the wrapper. The contract blocks rescuing the AJUN foreign asset and the wAJUN token itself, so the 1:1 backing cannot be broken.
+          </p>
+
+          <div class="panel-section">
+            <h4>Pause / unpause</h4>
+            <div class="form-row">
+              <button class="btn btn-danger" onclick="doPause()">Pause</button>
+              <button class="btn" onclick="doUnpause()">Unpause</button>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h4>Rescue stray ERC20</h4>
+            <div class="form-row">
+              <input type="text"   id="rescueToken"  placeholder="ERC20 contract (cannot be AJUN or wAJUN)" />
+              <input type="text"   id="rescueTo"     placeholder="recipient" />
+              <input type="text"   id="rescueAmount" placeholder="raw amount (smallest units)" />
+              <button class="btn btn-warning" onclick="doRescue()">Rescue</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═════════════ Wrapper ownership ═════════════ -->
+        <div class="panel hidden" data-panel="ownership">
+          <h3>Wrapper ownership (Ownable2Step)</h3>
+          <p class="help">
+            Two-step transfer: the current owner calls <code>transferOwnership</code>, then the incoming owner (e.g. multisig) calls <code>acceptOwnership</code>.
+            <code>renounceOwnership()</code> is disabled by the contract.
+          </p>
+
+          <div class="panel-section">
+            <h4>Start transfer (current owner)</h4>
+            <div class="form-row">
+              <input type="text" id="newOwner" placeholder="0x… new owner (multisig / timelock)" />
+              <button class="btn btn-warning" onclick="doTransferOwnership()">transferOwnership</button>
+            </div>
+            <p class="help">Tip: pass <code>0x0000…0000</code> to clear a pending transfer.</p>
+          </div>
+
+          <div class="panel-section">
+            <h4>Accept transfer (incoming owner)</h4>
+            <p class="help">Visible only when your connected wallet is the <code>pendingOwner</code>.</p>
+            <div class="form-row">
+              <button class="btn" id="btnAcceptOwnership" onclick="doAcceptOwnership()" disabled>acceptOwnership</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═════════════ Token admin ═════════════ -->
+        <div class="panel hidden" data-panel="token">
+          <h3>ERC20 admin (AccessControlDefaultAdminRules)</h3>
+          <p class="help">
+            <code>DEFAULT_ADMIN_ROLE</code> uses a delayed two-step transfer (production: 5 days). After
+            <code>beginDefaultAdminTransfer</code>, the proposed admin must wait the delay before <code>acceptDefaultAdminTransfer</code> succeeds.
+            Use <code>cancelDefaultAdminTransfer</code> to reset.
+          </p>
+
+          <div class="panel-section">
+            <h4>Begin admin transfer</h4>
+            <div class="form-row">
+              <input type="text" id="newAdmin" placeholder="0x… proposed admin (multisig / timelock)" />
+              <button class="btn btn-warning" onclick="doBeginAdminTransfer()">beginDefaultAdminTransfer</button>
+              <button class="btn btn-secondary" onclick="doCancelAdminTransfer()">cancelDefaultAdminTransfer</button>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h4>Accept admin transfer (proposed admin)</h4>
+            <p class="help">Available to <code>pendingDefaultAdmin</code> after the delay window has elapsed.</p>
+            <div class="form-row">
+              <button class="btn" id="btnAcceptAdmin" onclick="doAcceptAdminTransfer()" disabled>acceptDefaultAdminTransfer</button>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <h4>UPGRADER_ROLE</h4>
+            <div class="form-row">
+              <input type="text" id="upgraderAddr" placeholder="0x…" />
+              <button class="btn"               onclick="grantUpgrader()">Grant UPGRADER_ROLE</button>
+              <button class="btn btn-secondary" onclick="revokeUpgrader()">Revoke</button>
+            </div>
+            <p class="help">
+              Phase 9B note: after the multisig accepts <code>DEFAULT_ADMIN_ROLE</code>, the deployer must
+              <code>renounceRole(UPGRADER_ROLE, deployer)</code> from the deployer wallet.
+            </p>
+            <div class="form-row">
+              <button class="btn btn-danger" onclick="renounceUpgraderSelf()">Renounce my own UPGRADER_ROLE</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast-container" id="toasts"></div>
+
+      <div class="footer">
+        <p>
+          <a id="footerExplorer" href="#" target="_blank">Block explorer</a>
+          &middot;
+          <a href="app.html">User app</a>
+          &middot;
+          <a href="https://github.com/AjunaNetwork" target="_blank">GitHub</a>
+        </p>
+      </div>
+    </div>
+
+    <script>
+      // ─────────── CONFIG (mainnet defaults; URL params override) ───────────
+      const CONFIG = {
+        WRAPPER_ADDRESS:  "0xdc05685e80925dD500A454ee632225C2742b4477",
+        ERC20_ADDRESS:    "0xBf41e5a78030770479eC0fd93ecFF31b5320319c",
+        FOREIGN_ADDRESS:  "0x0000002d00000000000000000000000002200000",
+        CHAIN_ID:         420420419,
+        CHAIN_ID_HEX:     "0x190f1b43",
+        CHAIN_NAME:       "Polkadot Asset Hub",
+        NATIVE_SYMBOL:    "DOT",
+        RPC_URL:          "https://eth-rpc.polkadot.io/",
+        EXPLORER_URL:     "https://blockscout.polkadot.io",
+        DECIMALS:         12,
+      };
+      (() => {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get("wrapper"))  CONFIG.WRAPPER_ADDRESS = p.get("wrapper");
+        if (p.get("erc20"))    CONFIG.ERC20_ADDRESS   = p.get("erc20");
+        if (p.get("foreign"))  CONFIG.FOREIGN_ADDRESS = p.get("foreign");
+        if (p.get("chainId")) {
+          const cid = parseInt(p.get("chainId"), 10);
+          if (!isNaN(cid)) {
+            CONFIG.CHAIN_ID = cid;
+            CONFIG.CHAIN_ID_HEX = "0x" + cid.toString(16);
+          }
+        }
+        if (p.get("rpc"))      CONFIG.RPC_URL = p.get("rpc");
+        if (p.get("explorer")) CONFIG.EXPLORER_URL = p.get("explorer");
+      })();
+
+      // ─────────── ABIs ───────────
+      const WRAPPER_ABI = [
+        "function owner() view returns (address)",
+        "function pendingOwner() view returns (address)",
+        "function paused() view returns (bool)",
+        "function allowlistEnabled() view returns (bool)",
+        "function allowlisted(address) view returns (bool)",
+        "function token() view returns (address)",
+        "function foreignAsset() view returns (address)",
+        "function setAllowlistEnabled(bool)",
+        "function setAllowlist(address,bool)",
+        "function setAllowlistBatch(address[],bool)",
+        "function pause()",
+        "function unpause()",
+        "function rescueToken(address,address,uint256)",
+        "function transferOwnership(address)",
+        "function acceptOwnership()",
+      ];
+      const TOKEN_ABI = [
+        "function defaultAdmin() view returns (address)",
+        "function pendingDefaultAdmin() view returns (address newAdmin, uint48 acceptSchedule)",
+        "function defaultAdminDelay() view returns (uint48)",
+        "function boundMinter() view returns (address)",
+        "function decimals() view returns (uint8)",
+        "function totalSupply() view returns (uint256)",
+        "function MINTER_ROLE() view returns (bytes32)",
+        "function UPGRADER_ROLE() view returns (bytes32)",
+        "function hasRole(bytes32,address) view returns (bool)",
+        "function beginDefaultAdminTransfer(address)",
+        "function cancelDefaultAdminTransfer()",
+        "function acceptDefaultAdminTransfer()",
+        "function grantRole(bytes32,address)",
+        "function revokeRole(bytes32,address)",
+        "function renounceRole(bytes32,address)",
+      ];
+      const ERC20_ABI = [
+        "function balanceOf(address) view returns (uint256)",
+        "function decimals() view returns (uint8)",
+      ];
+
+      // ─────────── State ───────────
+      let provider, signer, userAddress;
+      let wrapper, token, foreign;
+      let decimals = CONFIG.DECIMALS;
+      const state = {
+        wrongChain: false,
+        ownerAddr: null,
+        pendingOwner: null,
+        adminAddr: null,
+        pendingAdmin: null,
+        pendingAdminSchedule: 0,
+        boundMinter: null,
+        paused: false,
+        allowlistEnabled: false,
+        supply: null,
+        locked: null,
+        upgraderRole: null,
+      };
+
+      // ─────────── Init ───────────
+      window.addEventListener("load", () => {
+        if (!window.ethereum) {
+          document.getElementById("connectSection").innerHTML =
+            '<div style="background:var(--ajuna-surface);border:1px solid var(--ajuna-border);border-radius:12px;padding:32px;text-align:center;color:var(--ajuna-text-muted)">No browser wallet detected. Install MetaMask, SubWallet, or Talisman in EVM mode and refresh.</div>';
+          return;
+        }
+        window.ethereum.request({ method: "eth_accounts" }).then((a) => {
+          if (a.length) connectWallet();
+        });
+        window.ethereum.on("accountsChanged", () => location.reload());
+        window.ethereum.on("chainChanged",   () => location.reload());
+
+        document.getElementById("footerExplorer").href = CONFIG.EXPLORER_URL;
+        document.getElementById("hExplorerWrapper").href     = `${CONFIG.EXPLORER_URL}/address/${CONFIG.WRAPPER_ADDRESS}`;
+        document.getElementById("hExplorerWrapper").textContent = shortAddr(CONFIG.WRAPPER_ADDRESS);
+        document.getElementById("hExplorerErc20").href       = `${CONFIG.EXPLORER_URL}/address/${CONFIG.ERC20_ADDRESS}`;
+        document.getElementById("hExplorerErc20").textContent = shortAddr(CONFIG.ERC20_ADDRESS);
+        document.getElementById("hExplorerForeign").href     = `${CONFIG.EXPLORER_URL}/address/${CONFIG.FOREIGN_ADDRESS}`;
+        document.getElementById("hExplorerForeign").textContent = shortAddr(CONFIG.FOREIGN_ADDRESS);
+
+        document.getElementById("alBatch").addEventListener("input", () => {
+          const list = parseAddrList(document.getElementById("alBatch").value);
+          document.getElementById("alBatchCount").textContent =
+            list.length ? `${list.length} address${list.length === 1 ? "" : "es"} parsed` : "";
+        });
+      });
+
+      // ─────────── Wallet ───────────
+      async function connectWallet() {
+        const btn = document.getElementById("btnConnect");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Connecting…';
+        try {
+          provider = new ethers.providers.Web3Provider(window.ethereum);
+          await provider.send("eth_requestAccounts", []);
+          signer = provider.getSigner();
+          userAddress = await signer.getAddress();
+          document.getElementById("walletAddr").textContent = userAddress;
+          document.getElementById("connectSection").style.display = "none";
+          document.getElementById("walletSection").style.display  = "block";
+
+          await ensureCorrectChain();
+          await initContracts();
+          await refreshAll();
+        } catch (e) {
+          toast("Connection failed: " + (e.reason || e.message), "error");
+          btn.disabled = false;
+          btn.textContent = "Connect Wallet";
+        }
+      }
+
+      async function ensureCorrectChain() {
+        const net = await provider.getNetwork();
+        if (net.chainId === CONFIG.CHAIN_ID) {
+          state.wrongChain = false;
+          document.getElementById("walletNet").textContent = `${CONFIG.CHAIN_NAME} (${CONFIG.CHAIN_ID})`;
+          return;
+        }
+        state.wrongChain = true;
+        document.getElementById("walletNet").textContent = `wrong (${net.chainId})`;
+        try {
+          await window.ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: CONFIG.CHAIN_ID_HEX }],
+          });
+          state.wrongChain = false;
+          document.getElementById("walletNet").textContent = `${CONFIG.CHAIN_NAME} (${CONFIG.CHAIN_ID})`;
+        } catch (e) {
+          if (e && e.code === 4902) {
+            try {
+              await window.ethereum.request({
+                method: "wallet_addEthereumChain",
+                params: [{
+                  chainId: CONFIG.CHAIN_ID_HEX,
+                  chainName: CONFIG.CHAIN_NAME,
+                  nativeCurrency: { name: CONFIG.NATIVE_SYMBOL, symbol: CONFIG.NATIVE_SYMBOL, decimals: 18 },
+                  rpcUrls: [CONFIG.RPC_URL],
+                  blockExplorerUrls: [CONFIG.EXPLORER_URL],
+                }],
+              });
+              state.wrongChain = false;
+              document.getElementById("walletNet").textContent = `${CONFIG.CHAIN_NAME} (${CONFIG.CHAIN_ID})`;
+            } catch (_) {}
+          }
+        }
+      }
+
+      async function initContracts() {
+        wrapper = new ethers.Contract(CONFIG.WRAPPER_ADDRESS, WRAPPER_ABI, signer);
+        token   = new ethers.Contract(CONFIG.ERC20_ADDRESS,   TOKEN_ABI,   signer);
+        foreign = new ethers.Contract(CONFIG.FOREIGN_ADDRESS, ERC20_ABI,   signer);
+        try { decimals = await token.decimals(); } catch (_) {}
+        try { state.upgraderRole = await token.UPGRADER_ROLE(); } catch (_) {}
+      }
+
+      // ─────────── Reads (health panel) ───────────
+      async function refreshAll() {
+        if (!wrapper) return;
+        try {
+          const [
+            ownerAddr, pendingOwner, paused, allowEnabled,
+            adminAddr, pendingAdminTuple, boundMinter,
+            supply, locked,
+          ] = await Promise.all([
+            wrapper.owner(),
+            wrapper.pendingOwner().catch(() => ethers.constants.AddressZero),
+            wrapper.paused(),
+            wrapper.allowlistEnabled(),
+            token.defaultAdmin(),
+            token.pendingDefaultAdmin().catch(() => null),
+            token.boundMinter(),
+            token.totalSupply(),
+            foreign.balanceOf(CONFIG.WRAPPER_ADDRESS),
+          ]);
+          state.ownerAddr            = ownerAddr;
+          state.pendingOwner         = pendingOwner;
+          state.paused               = paused;
+          state.allowlistEnabled     = allowEnabled;
+          state.adminAddr            = adminAddr;
+          state.pendingAdmin         = pendingAdminTuple ? pendingAdminTuple.newAdmin : ethers.constants.AddressZero;
+          state.pendingAdminSchedule = pendingAdminTuple ? Number(pendingAdminTuple.acceptSchedule) : 0;
+          state.boundMinter          = boundMinter;
+          state.supply               = supply;
+          state.locked               = locked;
+
+          renderHealth();
+          renderRoleTags();
+          renderStatusBanner();
+          document.getElementById("lastRefreshed").textContent =
+            "last refreshed " + new Date().toLocaleTimeString();
+        } catch (e) {
+          toast("Refresh failed: " + (e.reason || e.message), "error");
+        }
+      }
+
+      function renderHealth() {
+        const set = (id, v, cls = "") => {
+          const el = document.getElementById(id);
+          el.innerHTML = "";
+          if (typeof v === "string" && /^0x[a-fA-F0-9]{40}$/.test(v)) {
+            const a = document.createElement("a");
+            a.href = `${CONFIG.EXPLORER_URL}/address/${v}`;
+            a.target = "_blank";
+            a.textContent = v;
+            el.appendChild(a);
+          } else {
+            el.textContent = v;
+          }
+          el.className = "v" + (cls ? " " + cls : "");
+        };
+        set("hOwner",        state.ownerAddr);
+        set("hPendingOwner", isZero(state.pendingOwner) ? "(none)" : state.pendingOwner,
+            isZero(state.pendingOwner) ? "" : "warn");
+        set("hAdmin",        state.adminAddr);
+        if (isZero(state.pendingAdmin)) {
+          set("hPendingAdmin", "(none)");
+        } else {
+          const sched = state.pendingAdminSchedule;
+          const ready = sched > 0 && (Date.now() / 1000) >= sched;
+          set("hPendingAdmin",
+            `${state.pendingAdmin}  · ${ready ? "READY" : "delay until " + new Date(sched*1000).toLocaleString()}`,
+            ready ? "ok" : "warn");
+        }
+        set("hMinter",       state.boundMinter);
+
+        // Allowlist gate badge
+        const al = document.getElementById("hAllowlist");
+        al.innerHTML = state.allowlistEnabled
+          ? '<span class="badge warn">ON (restricted-access mode)</span>'
+          : '<span class="badge ok">OFF (public)</span>';
+        al.className = "v";
+
+        const pa = document.getElementById("hPaused");
+        pa.innerHTML = state.paused
+          ? '<span class="badge err">PAUSED</span>'
+          : '<span class="badge ok">running</span>';
+        pa.className = "v";
+
+        set("hSupply", trimDecimals(ethers.utils.formatUnits(state.supply, decimals)) + " wAJUN");
+        set("hLocked", trimDecimals(ethers.utils.formatUnits(state.locked, decimals)) + " AJUN");
+
+        // Invariant
+        const delta = state.supply.sub(state.locked);
+        const inv = document.getElementById("hInvariant");
+        if (delta.isZero()) {
+          inv.innerHTML = '<span class="badge ok">healthy 1:1</span>';
+        } else if (delta.gt(0)) {
+          inv.innerHTML = `<span class="badge err">UNDER-BACKED by ${trimDecimals(ethers.utils.formatUnits(delta, decimals))}</span>`;
+        } else {
+          inv.innerHTML = `<span class="badge warn">over by ${trimDecimals(ethers.utils.formatUnits(delta.mul(-1), decimals))}</span>`;
+        }
+        inv.className = "v";
+
+        // Cross-check
+        const cc = document.getElementById("hCrossCheck");
+        const same = state.ownerAddr.toLowerCase() === state.adminAddr.toLowerCase();
+        cc.innerHTML = same
+          ? '<span class="badge ok">aligned</span>'
+          : '<span class="badge warn">DIVERGED — see audit ATS-04</span>';
+        cc.className = "v";
+      }
+
+      function renderRoleTags() {
+        const me = (userAddress || "").toLowerCase();
+        const tags = [];
+        if (state.ownerAddr && me === state.ownerAddr.toLowerCase())  tags.push('<span class="role-tag owner">wrapper owner</span>');
+        if (state.pendingOwner && !isZero(state.pendingOwner) && me === state.pendingOwner.toLowerCase())
+          tags.push('<span class="role-tag owner">pendingOwner</span>');
+        if (state.adminAddr && me === state.adminAddr.toLowerCase()) tags.push('<span class="role-tag admin">token admin</span>');
+        if (state.pendingAdmin && !isZero(state.pendingAdmin) && me === state.pendingAdmin.toLowerCase())
+          tags.push('<span class="role-tag admin">pendingAdmin</span>');
+        if (tags.length === 0) tags.push('<span class="role-tag none">no admin role on either contract</span>');
+        document.getElementById("walletRole").innerHTML = "Roles: " + tags.join(" ");
+
+        // Enable accept-buttons if applicable
+        document.getElementById("btnAcceptOwnership").disabled =
+          !state.pendingOwner || isZero(state.pendingOwner) || me !== state.pendingOwner.toLowerCase();
+
+        const pendingAdminReady = state.pendingAdminSchedule > 0 &&
+          (Date.now() / 1000) >= state.pendingAdminSchedule;
+        document.getElementById("btnAcceptAdmin").disabled =
+          !state.pendingAdmin || isZero(state.pendingAdmin) ||
+          me !== state.pendingAdmin.toLowerCase() ||
+          !pendingAdminReady;
+      }
+
+      function renderStatusBanner() {
+        const el = document.getElementById("statusBanner");
+        const lines = [];
+        let level = "warn";
+        if (state.wrongChain) {
+          level = "error";
+          lines.push(`<strong>Wrong network.</strong> Switch to <code>${CONFIG.CHAIN_NAME}</code> (chain ID ${CONFIG.CHAIN_ID}).`);
+        }
+        const me = (userAddress || "").toLowerCase();
+        const isOwner = state.ownerAddr && me === state.ownerAddr.toLowerCase();
+        const isAdmin = state.adminAddr && me === state.adminAddr.toLowerCase();
+        const isPendingOwner = state.pendingOwner && !isZero(state.pendingOwner) && me === state.pendingOwner.toLowerCase();
+        const isPendingAdmin = state.pendingAdmin && !isZero(state.pendingAdmin) && me === state.pendingAdmin.toLowerCase();
+        if (!isOwner && !isAdmin && !isPendingOwner && !isPendingAdmin && !state.wrongChain) {
+          lines.push(`Your wallet has no admin role on either contract. You can read state, but write calls will revert.`);
+        }
+        if (state.paused) lines.push(`<strong>Wrapper is paused.</strong>`);
+        if (lines.length === 0) {
+          el.classList.add("hidden");
+          el.classList.remove("error");
+          return;
+        }
+        el.classList.remove("hidden", "error");
+        if (level === "error") el.classList.add("error");
+        el.innerHTML = lines.join("<br><br>");
+      }
+
+      // ─────────── Tabs ───────────
+      function switchTab(name) {
+        document.querySelectorAll(".tab").forEach(t => {
+          t.classList.toggle("active", t.dataset.tab === name);
+        });
+        document.querySelectorAll("[data-panel]").forEach(p => {
+          p.classList.toggle("hidden", p.dataset.panel !== name);
+        });
+      }
+
+      // ─────────── Allowlist actions ───────────
+      async function setAllowlistEnabled(enabled) {
+        await sendTx(
+          () => wrapper.setAllowlistEnabled(enabled),
+          enabled ? "Enabling allowlist gate" : "Disabling allowlist gate"
+        );
+      }
+      async function setAllowlist(allow) {
+        const addr = document.getElementById("alAddr").value.trim();
+        if (!ethers.utils.isAddress(addr)) return toast("Invalid address.", "error");
+        await sendTx(
+          () => wrapper.setAllowlist(addr, allow),
+          `${allow ? "Adding" : "Removing"} ${shortAddr(addr)}`
+        );
+      }
+      async function setAllowlistBatch(allow) {
+        const list = parseAddrList(document.getElementById("alBatch").value);
+        if (list.length === 0) return toast("No valid addresses parsed.", "error");
+        if (list.length > 100)  return toast("Max 100 addresses per call.", "error");
+        await sendTx(
+          () => wrapper.setAllowlistBatch(list, allow),
+          `${allow ? "Adding" : "Removing"} ${list.length} address${list.length === 1 ? "" : "es"} in batch`
+        );
+      }
+      async function checkAllowlist() {
+        const addr = document.getElementById("alLookup").value.trim();
+        const out  = document.getElementById("alLookupResult");
+        if (!ethers.utils.isAddress(addr)) {
+          out.textContent = "";
+          return;
+        }
+        try {
+          const isAllowed = await wrapper.allowlisted(addr);
+          const isOwner   = state.ownerAddr && addr.toLowerCase() === state.ownerAddr.toLowerCase();
+          out.className = "lookup-result " + (isAllowed || isOwner ? "allowed" : "denied");
+          out.textContent = isAllowed
+            ? `✓ allowlisted`
+            : (isOwner ? `✓ owner (implicitly allowed)` : `✗ not allowlisted (deposits will revert while gate is ON)`);
+        } catch (e) {
+          out.textContent = "lookup failed: " + (e.reason || e.message);
+        }
+      }
+
+      // ─────────── Pause / rescue ───────────
+      async function doPause()    { await sendTx(() => wrapper.pause(),   "Pausing wrapper"); }
+      async function doUnpause()  { await sendTx(() => wrapper.unpause(), "Unpausing wrapper"); }
+      async function doRescue() {
+        const tk = document.getElementById("rescueToken").value.trim();
+        const to = document.getElementById("rescueTo").value.trim();
+        const amt = document.getElementById("rescueAmount").value.trim();
+        if (!ethers.utils.isAddress(tk) || !ethers.utils.isAddress(to)) return toast("Invalid address.", "error");
+        if (tk.toLowerCase() === CONFIG.FOREIGN_ADDRESS.toLowerCase())
+          return toast("Cannot rescue the AJUN foreign asset (contract enforces this).", "error");
+        if (tk.toLowerCase() === CONFIG.ERC20_ADDRESS.toLowerCase())
+          return toast("Cannot rescue the wAJUN token (contract enforces this).", "error");
+        let amount;
+        try { amount = ethers.BigNumber.from(amt); } catch (_) { return toast("Amount must be an integer (raw units).", "error"); }
+        await sendTx(() => wrapper.rescueToken(tk, to, amount), `Rescuing ${amt} units`);
+      }
+
+      // ─────────── Wrapper ownership ───────────
+      async function doTransferOwnership() {
+        const addr = document.getElementById("newOwner").value.trim();
+        if (!ethers.utils.isAddress(addr)) return toast("Invalid address.", "error");
+        if (!confirm(`Start ownership transfer to ${addr}?\n\nThis is two-step — they must call acceptOwnership() to take control.`)) return;
+        await sendTx(() => wrapper.transferOwnership(addr), `transferOwnership(${shortAddr(addr)})`);
+      }
+      async function doAcceptOwnership() {
+        await sendTx(() => wrapper.acceptOwnership(), "acceptOwnership()");
+      }
+
+      // ─────────── Token admin ───────────
+      async function doBeginAdminTransfer() {
+        const addr = document.getElementById("newAdmin").value.trim();
+        if (!ethers.utils.isAddress(addr)) return toast("Invalid address.", "error");
+        if (!confirm(`Start DEFAULT_ADMIN_ROLE transfer to ${addr}?\n\nA delay (production: 5 days) elapses before they can accept.`)) return;
+        await sendTx(() => token.beginDefaultAdminTransfer(addr), `beginDefaultAdminTransfer(${shortAddr(addr)})`);
+      }
+      async function doCancelAdminTransfer() {
+        await sendTx(() => token.cancelDefaultAdminTransfer(), "cancelDefaultAdminTransfer()");
+      }
+      async function doAcceptAdminTransfer() {
+        await sendTx(() => token.acceptDefaultAdminTransfer(), "acceptDefaultAdminTransfer()");
+      }
+      async function grantUpgrader() {
+        const addr = document.getElementById("upgraderAddr").value.trim();
+        if (!ethers.utils.isAddress(addr)) return toast("Invalid address.", "error");
+        await sendTx(() => token.grantRole(state.upgraderRole, addr), `grantRole(UPGRADER_ROLE, ${shortAddr(addr)})`);
+      }
+      async function revokeUpgrader() {
+        const addr = document.getElementById("upgraderAddr").value.trim();
+        if (!ethers.utils.isAddress(addr)) return toast("Invalid address.", "error");
+        await sendTx(() => token.revokeRole(state.upgraderRole, addr), `revokeRole(UPGRADER_ROLE, ${shortAddr(addr)})`);
+      }
+      async function renounceUpgraderSelf() {
+        if (!confirm("Renounce UPGRADER_ROLE for your own wallet? You will permanently lose the ability to authorize upgrades.")) return;
+        await sendTx(() => token.renounceRole(state.upgraderRole, userAddress), `renounceRole(UPGRADER_ROLE, self)`);
+      }
+
+      // ─────────── Tx helper ───────────
+      async function sendTx(fn, label) {
+        toast(`${label} — confirm in your wallet…`, "pending");
+        try {
+          const tx = await fn();
+          toastTx(`${label} submitted`, tx.hash, "info");
+          await tx.wait();
+          toastTx(`${label} confirmed`, tx.hash, "success");
+          await refreshAll();
+        } catch (e) {
+          toast(`${label} failed: ${(e.reason || e.message || "").slice(0, 240)}`, "error");
+        }
+      }
+
+      // ─────────── Utils ───────────
+      function isZero(addr) {
+        return !addr || addr === ethers.constants.AddressZero;
+      }
+      function shortAddr(a) {
+        return a ? a.slice(0, 6) + "…" + a.slice(-4) : "";
+      }
+      function parseAddrList(text) {
+        return Array.from(new Set(
+          text.split(/[\s,;]+/).map(s => s.trim()).filter(s => s.length > 0)
+        )).filter(s => ethers.utils.isAddress(s));
+      }
+      function trimDecimals(str, maxDec = 6) {
+        const n = parseFloat(str);
+        if (isNaN(n)) return "0";
+        if (n === 0) return "0";
+        return n.toLocaleString("en-US", { maximumFractionDigits: maxDec });
+      }
+      function toast(msg, type = "info") {
+        const c = document.getElementById("toasts");
+        const el = document.createElement("div");
+        el.className = `toast toast-${type}`;
+        el.textContent = msg;
+        c.appendChild(el);
+        setTimeout(() => el.remove(), type === "error" ? 9000 : 5000);
+      }
+      function toastTx(msg, hash, type = "info") {
+        const c = document.getElementById("toasts");
+        const el = document.createElement("div");
+        el.className = `toast toast-${type}`;
+        el.textContent = msg + " — ";
+        const a = document.createElement("a");
+        a.href = `${CONFIG.EXPLORER_URL}/tx/${hash}`;
+        a.target = "_blank";
+        a.textContent = "view tx";
+        el.appendChild(a);
+        c.appendChild(el);
+        setTimeout(() => el.remove(), type === "error" ? 11000 : 7000);
+      }
+    </script>
+  </body>
+</html>
