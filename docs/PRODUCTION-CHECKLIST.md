@@ -16,6 +16,67 @@ It is deliberately procedural. Follow it top to bottom.
 - AJUN foreign-asset precompile index: `45`
 - AJUN foreign-asset precompile address: `0x0000002d00000000000000000000000002200000`
 
+## End-User AJUN Onboarding to Asset Hub
+
+End users move AJUN from parachain 2051 to Asset Hub via **`polkadotXcm.transferAssetsUsingTypeAndThen`** with explicit transfer types. Verified working on Polkadot mainnet (Ajuna spec_version 809, AH block #15047730 on 2026-04-27). The unified `polkadotXcm.transferAssets` no longer auto-detects the correct types after the polkadot-sdk stable2506-1 bump, so explicit types are required.
+
+### Working call (template)
+
+`polkadotXcm.transferAssetsUsingTypeAndThen` on Ajuna, signed by an account holding both AJUN and DOT:
+
+| Field | Value |
+|---|---|
+| `dest` (V4) | `{ parents: 1, interior: X1[ Parachain(1000) ] }` |
+| `assets` (V4) | two entries, in this exact order: |
+| `assets[0]` | `id: { parents: 0, interior: Here }`, `Fungible: <amount>` (AJUN; 12 decimals) |
+| `assets[1]` | `id: { parents: 1, interior: Here }`, `Fungible: <fee>` (DOT for AH execution; ≥ ~0.1 DOT recommended) |
+| `assetsTransferType` | **`Teleport`** (AJUN→AH is configured as trusted teleport) |
+| `remoteFeesId` (V4 AssetId) | `{ parents: 1, interior: Here }` (DOT id from AH's view) |
+| `feesTransferType` | **`DestinationReserve`** (AH is the DOT reserve post-AH-migration) |
+| `customXcmOnDest` (V4 `Xcm<()>`) | `[ DepositAsset { assets: Wild(AllCounted(2)), beneficiary: { parents: 0, interior: X1[ AccountId32 { network: None, id: <recipient_pubkey> } ] } } ]` |
+| `weightLimit` | `Unlimited` |
+
+### Reference encoded call (template)
+
+A 0.1 AJUN + 0.1 DOT-fee transfer, beneficiary `0x94546ff56643b8c0fed386347d7a8cd0b995383125a0fc0f0e45f0e33a6c5827`. Paste into PJS Apps `Extrinsics → Decode` connected to Ajuna to inspect / adapt:
+
+```
+0x1f0d04010100a10f04080000000700e876481701000002286bee000401000204040d0102080001010094546ff56643b8c0fed386347d7a8cd0b995383125a0fc0f0e45f0e33a6c582700
+```
+
+PJS Apps URL form:
+
+```
+https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Frpc-para.ajuna.network#/extrinsics/decode/0x1f0d04010100a10f04080000000700e876481701000002286bee000401000204040d0102080001010094546ff56643b8c0fed386347d7a8cd0b995383125a0fc0f0e45f0e33a6c582700
+```
+
+Reference success block on AH: [#15047730](https://assethub-polkadot.subscan.io/block/15047730) (2026-04-27) — landed `foreignAssets.IssuedCredit` 0.1 AJUN + DOT surplus refund cleanly.
+
+### Prerequisites for the user
+
+- **AJUN on Ajuna** in the signing account.
+- **DOT on Ajuna** in the signing account (≥ ~0.1 DOT for AH execution fees; the unused remainder is credited back on AH).
+- **AH account exists** for the recipient. If the recipient has DOT on AH, this is satisfied. Otherwise call `foreignAssets.touch` on AH first to create the AJUN account entry (AJUN is `isSufficient: false`, deliberately).
+
+### What success looks like
+
+Source side (Ajuna), in the same block:
+- `polkadotXcm.Sent` whose `message` contains `WithdrawAsset(DOT)`, `BuyExecution(DOT)`, `ReceiveTeleportedAsset(AJUN at {parents:1, X1[Parachain(2051)]})`, `ClearOrigin`, `DepositAsset`.
+
+Destination side (AH), 1–2 blocks later:
+- `messageQueue.Processed { origin: Sibling(2051), success: true }`
+- `foreignAssets.IssuedCredit` and `foreignAssets.Deposited` for asset `{parents:1, X1[Parachain(2051)]}` and the recipient
+- `balances.Withdraw` 0.1 DOT from parachain 2051's sibling sovereign account, then `balances.Deposit` of the surplus to the recipient (DestinationReserve mechanics), plus a small fee deposit to the collator/treasury account.
+
+### Why other entrypoints don't work (for the team's reference)
+
+- `xTokens.transferMultiasset` emits `{parents:1, X2[Parachain(2051), GeneralKey("AJUN")]}` regardless of input — Location mismatch with AH's X1 registration, traps assets.
+- `polkadotXcm.limitedReserveTransferAssets` → `polkadotXcm.Filtered` (gated by `XcmReserveTransferFilter`).
+- `polkadotXcm.transferAssets` (auto-detect) → `InvalidAssetUnknownReserve` against current spec_version (the SDK bump in commit `c5ab816` introduced a stricter `find_fee_and_assets_transfer_types` that no longer classifies the AJUN+DOT pair). It worked at spec_version 600 (block 4031229 on Ajuna). Worth filing a runtime/SDK ticket if auto-detection is intended to keep working.
+- `polkadotXcm.transferAssets` with AJUN id = `{parents:1, X1[Parachain(2051)]}` triggers a **WASM panic during validate_transaction** — separate Ajuna-runtime bug worth filing regardless.
+
+`scripts/lookup_ajun_asset.ts`'s `AJUN_MULTI_LOCATION = { parents: 1, X1: [{ Parachain: 2051 }] }` is correct and should not be changed.
+
 ## Fill-In Block
 
 Complete this block during rollout.
