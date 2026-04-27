@@ -4,6 +4,30 @@ This checklist is intended for operators and AI agents performing or auditing a 
 
 It is deliberately procedural. Follow it top to bottom.
 
+## Current Rollout Status
+
+> **Live deployment in progress** — addresses recorded in the Fill-In Block below.
+>
+> | Phase | State | Notes |
+> |---|---|---|
+> | 1. Preflight | ✅ done | 2026-04-27 |
+> | 2. Live chain confirmation | ✅ done | precompile + chainID re-verified |
+> | 3. Optional dry run on fork | ⚠ partial | Chopsticks Phases 0–2 OK; Phase 3+ blocked by upstream `EthSetOrigin` limitation — see [scripts/chopsticks_rehearsal.ts](../scripts/chopsticks_rehearsal.ts) |
+> | 4. Production deployment | ✅ done | proxies in Fill-In Block |
+> | 5. Post-deploy checks | ✅ done | all 8 invariants pass |
+> | 6A. Seed native DOT | ✅ done | wrapper funded |
+> | 6B. Seed AJUN asset balance | ✅ done | 0.01 AJUN dust seeded (10× `minBalance`) |
+> | 7. Functional verification (allowlist-gated) | ✅ done | wrap/unwrap round-trip OK on mainnet |
+> | **8. Admin handoff** | ⏸ **BLOCKED** | **multisig contract not yet deployed at recorded address** |
+> | 9. Multisig acceptance & deployer privilege removal | ⏳ pending | depends on Phase 8 |
+> | 10. Frontend & ops update | ⏳ pending | needs final addresses in `frontend/app.html` |
+> | 10B. Install timelock | ⏳ pending | runbook in this doc; deploy script in [scripts/deploy_timelock.ts](../scripts/deploy_timelock.ts) |
+> | 11. Open to public | ⏳ pending | gated by Phase 10B |
+> | 12. Final sign-off | ⏳ pending | depends on all above |
+>
+> **Allowlist gate is currently ON.** Only the deployer can `deposit` /
+> `withdraw`. Public users cannot interact until Phase 11.
+
 ## Fixed Production Facts
 
 - Network: `polkadotMainnet`
@@ -82,20 +106,35 @@ Destination side (AH), 1–2 blocks later:
 Complete this block during rollout.
 
 ```text
-Date:
-Operator:
-AI Agent:
-Git commit:
-Deployer EOA:
-Multisig / governance address:
-AJUN precompile address used:
-AjunaERC20 proxy address:
-AjunaERC20 implementation address:
-AjunaWrapper proxy address:
-AjunaWrapper implementation address:
+Date:                              2026-04-27
+Operator:                          10igma (10igma.official@gmail.com)
+AI Agent:                          Claude Opus 4.7 (1M context) — Claude Code
+Git commit:                        e8c2bae6034f1f02d34b18d538b47a55d79ed5da
+Deployer EOA:                      0x0f7E9915CCc46cb36eFcf43C944D906f2a822A42
+Multisig / governance address:     0xE33Fa584C49d2E983E1b2F165c3208f5011f3449 (PENDING — contract not yet deployed at this address as of 2026-04-27)
+AJUN precompile address used:      0x0000002d00000000000000000000000002200000
+AjunaERC20 proxy address:          0xBf41e5a78030770479eC0fd93ecFF31b5320319c
+AjunaERC20 implementation address: 0x7f2946F282CA5f4a9e47ffE16f4Edbd7cE0B6e8c
+AjunaWrapper proxy address:        0xdc05685e80925dD500A454ee632225C2742b4477
+AjunaWrapper implementation:       0x419c52D118aE8bf0Ec61172fcd65454ce0974775
 Deployment tx hashes:
+  AjunaERC20 impl creation:        0xca79bc43e7115f11b9a8587a4893e99d75de5aecbb5d1ae7b40f3922dfb4eae4
+  AjunaERC20 proxy creation:       0x606b04fb238e83a0eeac6fc0e107024efa6ba8b444f9abdd3a6a0874941f95a7  (block 15021005)
+  AjunaWrapper impl creation:      0x29f256f09bf7380988542e6d47ceb1373a6835ff56c0189f9b1943c668400d4d
+  AjunaWrapper proxy creation:     0x1ec6168e29bc5a4e653bc9953386bbdba2096f82b262e69163d41ec4512048bf
+  token.bindMinter(wrapper):       0x3226aee997649ba0bd0cc0a49d9864c5621a2533b13ea05d1864ad7f90acefc9  (block 15021009; closes ATS-04)
 Verification tx hashes:
+  Phase 6B approve (10 AJUN):      0x182f0944e1d9970aa8c4c4e347e54ff6c94561f5f2e834c242549e4fe2e25d87
+  Phase 6B deposit (0.01 AJUN):    0xa3fd5c1588f61729f9338004c44e9227a3e0e21320837a4dfbf4b1af52f68979
+  Phase 7 e2e deposit:             block 15048332
+  Phase 7 e2e withdraw:            block 15048342
 Notes:
+  - Phases 1–7 completed successfully. Wrap/unwrap round-trip verified
+    on mainnet (1 AJUN). Invariant held throughout.
+  - Phase 8 BLOCKED: multisig contract not yet deployed at the recorded
+    address. Cannot start admin handoff until multisig exists.
+  - End-state at end of Phase 7: AJUN.balanceOf(wrapper) = 0.01;
+    wAJUN.totalSupply() = 0.01; allowlistEnabled = true (deployer-only).
 ```
 
 ## Phase 1: Preflight
@@ -250,8 +289,20 @@ balances.transferKeepAlive(dest: <wrapper_proxy>, value: 1_000_000_000)
 - [ ] Call `deposit()` with a small amount.
 - [ ] Keep that seeded balance in the wrapper so the AJUN asset account is not reaped.
 
-Suggested minimum operational seed:
-- `100` smallest AJUN units or whatever amount operations defines as permanent dust
+**AJUN existential deposit (`minBalance`) is `1_000_000_000` raw (= 0.001 AJUN).**
+The seed must be **at least `minBalance`** or the asset account is reaped on
+the next sweep. Anything below that is worse than not seeding at all.
+
+Suggested operational seed:
+- **Minimum:** `1_000_000_000` raw (= 0.001 AJUN, exactly `minBalance`).
+- **Recommended:** `10_000_000_000` raw (= 0.01 AJUN, 10× `minBalance`) —
+  leaves headroom in case the ED is bumped by a runtime upgrade and avoids
+  sitting right on the reap threshold.
+
+> Historical note: an earlier revision of this checklist suggested "100
+> smallest AJUN units" as the operational seed. That value is **below**
+> `minBalance` and will be reaped — do not use it. The 2026-04-27 mainnet
+> rollout used `1e10` (= 0.01 AJUN) and that is now the recommended floor.
 
 ## Phase 7: Functional Verification (Allowlist-Gated)
 
