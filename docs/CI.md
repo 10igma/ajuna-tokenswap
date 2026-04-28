@@ -19,21 +19,29 @@ Two parallel jobs, both must pass for the PR to be mergeable.
 
 | Tool | Configuration | Why |
 |------|---------------|-----|
-| [crytic/slither-action@v0.4.0](https://github.com/crytic/slither-action) | `fail-on: high`, `--exclude naming-convention` | Static analysis on every commit. Any high-severity finding fails CI. Medium and below are reported as annotations but do not fail. |
+| [crytic/slither-action@v0.4.0](https://github.com/crytic/slither-action) | [`slither.config.json`](../slither.config.json) (`fail_on: high`, `filter_paths: node_modules\|contracts/mocks`, `detectors_to_exclude: naming-convention`) | Static analysis on every commit. Any high-severity finding fails CI. Medium and below are reported as annotations but do not fail. |
 
 ## Suppressions
 
-The current baseline has **zero high-severity findings**. The known
-non-failing items:
+The current baseline has **zero high-severity findings** in the in-scope
+codebase. All slither options live in [`slither.config.json`](../slither.config.json) so
+CI and local runs stay in sync. The known non-failing items:
 
 - **`incorrect-equality` on [`AjunaWrapper.isInvariantHealthy`](../contracts/AjunaWrapper.sol)** — suppressed via a per-line
   `// slither-disable-next-line incorrect-equality` annotation. The strict
   equality is intentional ("is the backing exactly 1:1?"); off-chain monitors
   that need direction should call [`isUnderCollateralized()`](../contracts/AjunaWrapper.sol)
   (audit ATS-12 sister view).
-- **`naming-convention`** — excluded globally. The codebase uses the
-  OpenZeppelin convention (leading underscore for `_token`, `_foreignAssetPrecompile`,
-  `__gap`, …) which slither flags as non-mixedCase.
+- **`naming-convention`** — excluded globally via `detectors_to_exclude`. The
+  codebase uses the OpenZeppelin convention (leading underscore for `_token`,
+  `_foreignAssetPrecompile`, `__gap`, …) which slither flags as non-mixedCase.
+- **`node_modules` and `contracts/mocks` filtered** via `filter_paths`. Third-party
+  dependencies are not in our audit scope, and the mocks under `contracts/mocks/`
+  are intentionally misbehaving ERC20s used only by the test suite. Without
+  this filter slither reports false-positive HIGHs on OpenZeppelin's
+  `Math.mulDiv` (`incorrect-exp` misreads `^` XOR as exponentiation) and
+  `TimelockController._execute` (`arbitrary-send-eth` — by design for a
+  timelock).
 
 ## What this gate prevents
 
@@ -66,8 +74,9 @@ npx hardhat compile
 npx hardhat test
 npx --yes @openzeppelin/upgrades-core validate artifacts/build-info
 
-# Slither (requires Python + pipx slither-analyzer 0.11.5+)
-slither . --exclude naming-convention --fail-high
+# Slither (requires Python + pipx slither-analyzer 0.11.5+).
+# Picks up slither.config.json from the repo root automatically.
+slither .
 ```
 
 ## Future additions (not in this baseline)
