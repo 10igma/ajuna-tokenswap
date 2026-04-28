@@ -1,0 +1,5 @@
+{
+  "detectors_to_exclude": "naming-convention",
+  "filter_paths": "node_modules|contracts/mocks",
+  "fail_on": "high"
+}

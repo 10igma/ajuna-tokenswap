@@ -57,16 +57,24 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   # slither — static analysis baseline.
   #
-  # `fail-on: high` means any high-severity finding fails CI. Medium and
-  # below are reported but do not fail. The current baseline has zero
-  # high-severity findings (audit confirmed). The known intentional
-  # strict-equality on `isInvariantHealthy` is suppressed via a per-line
-  # `// slither-disable-next-line incorrect-equality` annotation in source.
+  # All detector / filter / severity options are sourced from
+  # `slither.config.json` at the repo root so CI and local runs stay in
+  # sync. Highlights:
+  #   - `fail_on: high` — any high-severity finding fails CI.
+  #   - `filter_paths: node_modules|contracts/mocks` — third-party deps
+  #     and intentionally-malicious test mocks are out of audit scope.
+  #     Without this filter slither reports false-positive HIGHs on
+  #     OpenZeppelin's `Math.mulDiv` (`incorrect-exp` misreads `^` XOR
+  #     as exponentiation) and `TimelockController._execute`
+  #     (`arbitrary-send-eth` — by design for a timelock).
+  #   - `detectors_to_exclude: naming-convention` — the codebase uses the
+  #     OpenZeppelin convention (leading underscore for `_token`,
+  #     `_foreignAssetPrecompile`, `__gap`, etc.) which slither flags as
+  #     non-mixedCase.
   #
-  # `naming-convention` is excluded globally because the codebase uses the
-  # OpenZeppelin convention (leading underscore for `_token`,
-  # `_foreignAssetPrecompile`, `__gap`, etc.) which slither flags as
-  # non-mixedCase.
+  # The known intentional strict-equality on `isInvariantHealthy` is
+  # suppressed at source via a per-line
+  # `// slither-disable-next-line incorrect-equality` annotation.
   # ─────────────────────────────────────────────────────────────────────
   slither:
     name: Slither static analysis
@@ -89,5 +97,4 @@ jobs:
         uses: crytic/slither-action@v0.4.0
         with:
           target: '.'
-          fail-on: high
-          slither-args: '--exclude naming-convention'
+          slither-config: 'slither.config.json'
