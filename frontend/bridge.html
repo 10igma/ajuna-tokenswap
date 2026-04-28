@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ajuna ↔ AssetHub Bridge — XCM Test UI</title>
+
+    <!--
+      polkadot.js loaded via ESM (esm.sh resolves the full transitive dep graph).
+      The UMD bundles on jsdelivr can't be used directly: the api UMD wrapper
+      expects globals (`global.constants`, `global.util$1`) that the standard
+      `bundle-polkadot-types.js` doesn't expose, which surfaces as a
+      `Cannot read properties of undefined (reading 'unwrapStorageSi')` crash
+      the first time a storage query is decoded.
+    -->
+
+    <style>
+      :root {
+        --primary: #6290AF;
+        --secondary: #7EC8EF;
+        --success: #4ade80;
+        --warning: #fbbf24;
+        --error: #ef4444;
+        --bg: #09090b;
+        --surface: #18181b;
+        --surface2: #27272a;
+        --text: #f4f4f5;
+        --muted: #71717a;
+        --border: #27272a;
+        --radius: 12px;
+      }
+
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: var(--surface); }
+      ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 9999px; }
+
+      .app { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+
+      .brand { text-align: center; padding: 16px 0 12px; }
+      .brand h1 { font-size: 1.5em; font-weight: 800; color: var(--primary); }
+      .brand p { color: var(--muted); font-size: 0.9em; margin-top: 4px; }
+
+      .top-row {
+        display: flex; align-items: center; gap: 12px;
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 14px 16px; margin: 16px 0;
+      }
+      .top-row select, .top-row button {
+        background: var(--surface2); color: var(--text);
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 8px 12px; font-size: 0.9em; cursor: pointer;
+      }
+      .top-row select { flex: 1; min-width: 0; }
+      .top-row button:hover { background: #3f3f46; }
+      .top-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .balances {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+        margin: 16px 0;
+      }
+      .bal-card {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 14px 16px;
+      }
+      .bal-card h3 {
+        font-size: 0.78em; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;
+      }
+      .bal-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.92em; align-items: baseline; }
+      .bal-row .sym { color: var(--muted); }
+      .bal-row .val { font-family: "JetBrains Mono", monospace; text-align: right; }
+      .bal-row .val .free { color: var(--success); }
+      .bal-row .val .total { color: var(--muted); font-size: 0.78em; margin-left: 6px; }
+
+      .conn-status {
+        font-size: 0.78em; padding: 2px 8px; border-radius: 9999px;
+        background: var(--surface2); color: var(--muted);
+      }
+      .conn-status.ok { color: var(--success); border: 1px solid rgba(74,222,128,0.3); }
+      .conn-status.err { color: var(--error); border: 1px solid rgba(239,68,68,0.3); }
+
+      .flows {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+      }
+      @media (max-width: 640px) { .flows { grid-template-columns: 1fr; } }
+
+      .flow-card {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 16px;
+      }
+      .flow-card h2 {
+        font-size: 1em; color: var(--secondary);
+        margin-bottom: 4px; font-weight: 700;
+      }
+      .flow-card .sub {
+        font-size: 0.78em; color: var(--muted); margin-bottom: 12px;
+      }
+      .flow-card label {
+        display: block; font-size: 0.78em; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.05em;
+        margin: 10px 0 4px;
+      }
+      .flow-card input {
+        width: 100%; background: var(--surface2); color: var(--text);
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 10px 12px; font-size: 0.95em;
+        font-family: "JetBrains Mono", monospace;
+      }
+      .flow-card input:focus { outline: 1px solid var(--primary); }
+      .flow-card button {
+        width: 100%; margin-top: 14px; padding: 12px;
+        background: var(--primary); color: white; border: none;
+        border-radius: 8px; font-size: 0.95em; font-weight: 600;
+        cursor: pointer; transition: background 0.15s;
+      }
+      .flow-card button:hover:not(:disabled) { background: #7BA8C9; }
+      .flow-card button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .max-link {
+        font-size: 0.75em; color: var(--primary); cursor: pointer;
+        margin-left: 6px;
+      }
+      .max-link:hover { text-decoration: underline; }
+
+      .log-panel {
+        margin-top: 20px;
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius); padding: 14px 16px;
+      }
+      .log-panel h3 { font-size: 0.85em; color: var(--muted); margin-bottom: 8px; }
+      .log {
+        font-family: "JetBrains Mono", monospace; font-size: 0.78em;
+        max-height: 260px; overflow-y: auto;
+        background: var(--bg); border-radius: 6px; padding: 10px;
+        white-space: pre-wrap; word-break: break-all;
+      }
+      .log .info { color: var(--text); }
+      .log .ok   { color: var(--success); }
+      .log .warn { color: var(--warning); }
+      .log .err  { color: var(--error); }
+      .log .dim  { color: var(--muted); }
+
+      .footer {
+        text-align: center; color: var(--muted); font-size: 0.8em;
+        padding: 24px 0 0;
+      }
+      .footer a { color: var(--primary); text-decoration: none; }
+      .footer a:hover { text-decoration: underline; }
+    </style>
+  </head>
+
+  <body>
+    <div class="app">
+      <div class="brand">
+        <h1>Ajuna ↔ Asset Hub Bridge</h1>
+        <p>XCM test UI for AJUN and DOT in both directions</p>
+      </div>
+
+      <!-- Wallet / account picker -->
+      <div class="top-row">
+        <button id="btnConnect" onclick="connectWallet()">Connect Substrate Wallet</button>
+        <select id="accountSelect" style="display:none" onchange="onAccountChange()"></select>
+        <span class="conn-status" id="connAjuna">Ajuna —</span>
+        <span class="conn-status" id="connAH">AH —</span>
+      </div>
+
+      <!-- Balances -->
+      <div class="balances" id="balancesWrap" style="display:none">
+        <div class="bal-card">
+          <h3>Ajuna Network (Para 2051)</h3>
+          <div class="bal-row"><span class="sym">AJUN</span><span class="val" id="balAjunaAjun">—</span></div>
+          <div class="bal-row"><span class="sym">DOT</span><span class="val" id="balAjunaDot">—</span></div>
+          <div class="bal-row"><span class="sym">Address</span><span class="val" id="addrAjuna" style="font-size:0.7em">—</span></div>
+        </div>
+        <div class="bal-card">
+          <h3>Asset Hub (Para 1000)</h3>
+          <div class="bal-row"><span class="sym">DOT</span><span class="val" id="balAhDot">—</span></div>
+          <div class="bal-row"><span class="sym">AJUN</span><span class="val" id="balAhAjun">—</span></div>
+          <div class="bal-row"><span class="sym">Address</span><span class="val" id="addrAH" style="font-size:0.7em">—</span></div>
+        </div>
+      </div>
+
+      <!-- Flows -->
+      <div class="flows" id="flowsWrap" style="display:none">
+
+        <!-- AJUN: Ajuna → AH (proven mainnet flow) -->
+        <div class="flow-card">
+          <h2>AJUN → Asset Hub</h2>
+          <div class="sub">Teleport AJUN from Ajuna to AH. DOT pays AH-side fees (DestinationReserve). Proven on mainnet.</div>
+          <label>AJUN amount<span class="max-link" onclick="setMax('ajunOutAmt','ajunaAjun')">max</span></label>
+          <input id="ajunOutAmt" placeholder="0.1" inputmode="decimal" />
+          <label>DOT for AH fees (≥ 0.1 recommended; surplus refunded)</label>
+          <input id="ajunOutDotFee" value="0.1" inputmode="decimal" />
+          <label>Recipient (AH SS58 — defaults to self)</label>
+          <input id="ajunOutTo" placeholder="(self)" />
+          <button onclick="sendAjunOut()">Send AJUN → AH</button>
+        </div>
+
+        <!-- AJUN: AH → Ajuna -->
+        <div class="flow-card">
+          <h2>AJUN ← Asset Hub</h2>
+          <div class="sub">Teleport AJUN back from AH to Ajuna. AJUN pays its own fees on Ajuna (Teleport).</div>
+          <label>AJUN amount<span class="max-link" onclick="setMax('ajunInAmt','ahAjun')">max</span></label>
+          <input id="ajunInAmt" placeholder="0.1" inputmode="decimal" />
+          <label>Recipient (Ajuna SS58 — defaults to self)</label>
+          <input id="ajunInTo" placeholder="(self)" />
+          <button onclick="sendAjunIn()">Send AJUN ← AH</button>
+        </div>
+
+        <!-- DOT: AH → Ajuna -->
+        <div class="flow-card">
+          <h2>DOT → Ajuna</h2>
+          <div class="sub">Reserve transfer DOT from AH to Ajuna. AH is DOT's reserve (LocalReserve from AH's view).</div>
+          <label>DOT amount<span class="max-link" onclick="setMax('dotOutAmt','ahDot')">max</span></label>
+          <input id="dotOutAmt" placeholder="0.1" inputmode="decimal" />
+          <label>Recipient (Ajuna SS58 — defaults to self)</label>
+          <input id="dotOutTo" placeholder="(self)" />
+          <button onclick="sendDotOut()">Send DOT → Ajuna</button>
+        </div>
+
+        <!-- DOT: Ajuna → AH -->
+        <div class="flow-card">
+          <h2>DOT ← Ajuna</h2>
+          <div class="sub">Move derivative DOT back from Ajuna to its AH reserve (DestinationReserve from Ajuna's view).</div>
+          <label>DOT amount<span class="max-link" onclick="setMax('dotInAmt','ajunaDot')">max</span></label>
+          <input id="dotInAmt" placeholder="0.1" inputmode="decimal" />
+          <label>Recipient (AH SS58 — defaults to self)</label>
+          <input id="dotInTo" placeholder="(self)" />
+          <button onclick="sendDotIn()">Send DOT ← Ajuna</button>
+        </div>
+      </div>
+
+      <!-- Activity log -->
+      <div class="log-panel">
+        <h3>Activity log</h3>
+        <div class="log" id="log"><span class="dim">Connect a Substrate wallet (Polkadot.js, SubWallet, or Talisman) to begin.</span></div>
+      </div>
+
+      <div class="footer">
+        <p>
+          <a href="app.html">← Wrap/Unwrap dApp</a>
+          &middot;
+          <a href="https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Frpc-para.ajuna.network" target="_blank">Ajuna in PJS Apps</a>
+          &middot;
+          <a href="https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Fpolkadot-asset-hub-rpc.polkadot.io" target="_blank">AH in PJS Apps</a>
+        </p>
+      </div>
+    </div>
+
+    <script type="module">
+      // ─── Library imports (ESM via esm.sh — handles transitive deps) ───
+      import * as polkadotApi          from "https://esm.sh/@polkadot/api@16";
+      import * as polkadotExtensionDapp from "https://esm.sh/@polkadot/extension-dapp@0.63";
+      import * as polkadotUtil         from "https://esm.sh/@polkadot/util@14";
+      import * as polkadotUtilCrypto   from "https://esm.sh/@polkadot/util-crypto@14";
+
+      // ─── Configuration ────────────────────────────────────────
+      const CONFIG = {
+        AJUNA_RPC: "wss://rpc-para.ajuna.network",
+        AH_RPC:    "wss://polkadot-asset-hub-rpc.polkadot.io",
+        AJUNA_PARA_ID: 2051,
+        AH_PARA_ID:    1000,
+        AJUN_DECIMALS: 12,
+        DOT_DECIMALS:  10,
+      };
+
+      // SS58 prefixes are read from each chain's registry at connection time.
+      // Defaults are only used until the chain answers.
+      let ajunaSS58 = 42;  // generic substrate fallback
+      let ahSS58    = 0;   // Polkadot prefix
+
+      // URL overrides
+      (() => {
+        const p = new URLSearchParams(window.location.search);
+        if (p.get("ajunaRpc")) CONFIG.AJUNA_RPC = p.get("ajunaRpc");
+        if (p.get("ahRpc"))    CONFIG.AH_RPC    = p.get("ahRpc");
+      })();
+
+      // ─── State ────────────────────────────────────────────────
+      let apiAjuna = null;
+      let apiAH = null;
+      let accounts = [];
+      let selectedAccount = null;   // InjectedAccountWithMeta
+      let injector = null;          // Signer for selected account
+      // Each balance stores { free, total } as bigints (or null until read).
+      // free   = transferable (free - max(frozen, 0)), accounts for locks/holds/ED
+      // total  = free + reserved
+      let balances = {
+        ajunaAjun: null, ajunaDot: null, ahDot: null, ahAjun: null
+      };
+
+      // ─── Library shortcuts (resolve to the ESM namespaces above) ──
+      const PA  = () => polkadotApi;
+      const PED = () => polkadotExtensionDapp;
+      const PU  = () => polkadotUtil;
+      const PUC = () => polkadotUtilCrypto;
+
+      // ─── Logging ──────────────────────────────────────────────
+      function log(msg, level = "info") {
+        const el = document.getElementById("log");
+        const span = document.createElement("div");
+        span.className = level;
+        const ts = new Date().toLocaleTimeString();
+        span.textContent = `[${ts}] ${msg}`;
+        el.appendChild(span);
+        el.scrollTop = el.scrollHeight;
+        console.log(`[bridge:${level}]`, msg);
+      }
+
+      // ─── Connection ───────────────────────────────────────────
+      async function connectChains() {
+        log(`Connecting to Ajuna (${CONFIG.AJUNA_RPC})…`);
+        try {
+          const provider = new (PA().WsProvider)(CONFIG.AJUNA_RPC);
+          apiAjuna = await PA().ApiPromise.create({ provider });
+          await apiAjuna.isReady;
+          const chain = (await apiAjuna.rpc.system.chain()).toString();
+          const spec  = apiAjuna.runtimeVersion.specVersion.toString();
+          const ss58  = apiAjuna.registry.chainSS58;
+          if (ss58 != null) ajunaSS58 = ss58;
+          log(`✓ Ajuna connected: ${chain} (spec ${spec}, ss58 ${ajunaSS58})`, "ok");
+          setConn("connAjuna", `Ajuna ✓ spec ${spec}`, "ok");
+        } catch (e) {
+          log(`✗ Ajuna connect failed: ${e.message}`, "err");
+          setConn("connAjuna", "Ajuna ✗", "err");
+        }
+
+        log(`Connecting to Asset Hub (${CONFIG.AH_RPC})…`);
+        try {
+          const provider = new (PA().WsProvider)(CONFIG.AH_RPC);
+          apiAH = await PA().ApiPromise.create({ provider });
+          await apiAH.isReady;
+          const chain = (await apiAH.rpc.system.chain()).toString();
+          const spec  = apiAH.runtimeVersion.specVersion.toString();
+          const ss58  = apiAH.registry.chainSS58;
+          if (ss58 != null) ahSS58 = ss58;
+          log(`✓ AH connected: ${chain} (spec ${spec}, ss58 ${ahSS58})`, "ok");
+          setConn("connAH", `AH ✓ spec ${spec}`, "ok");
+        } catch (e) {
+          log(`✗ AH connect failed: ${e.message}`, "err");
+          setConn("connAH", "AH ✗", "err");
+        }
+      }
+
+      function setConn(id, text, cls) {
+        const el = document.getElementById(id);
+        el.textContent = text;
+        el.className = `conn-status ${cls}`;
+      }
+
+      async function connectWallet() {
+        const btn = document.getElementById("btnConnect");
+        btn.disabled = true;
+        btn.textContent = "Connecting…";
+        try {
+          const enabled = await PED().web3Enable("Ajuna XCM Bridge UI");
+          if (!enabled.length) {
+            log("No Substrate wallet extension found. Install Polkadot.js, SubWallet, or Talisman.", "err");
+            btn.disabled = false;
+            btn.textContent = "Connect Substrate Wallet";
+            return;
+          }
+          accounts = await PED().web3Accounts();
+          if (!accounts.length) {
+            log("No accounts in wallet extension. Add or import an account first.", "err");
+            btn.disabled = false;
+            btn.textContent = "Connect Substrate Wallet";
+            return;
+          }
+          log(`Found ${accounts.length} account(s) from ${enabled.map(e => e.name).join(", ")}.`, "ok");
+
+          const sel = document.getElementById("accountSelect");
+          sel.innerHTML = "";
+          accounts.forEach((a, i) => {
+            const opt = document.createElement("option");
+            opt.value = i;
+            opt.textContent = `${a.meta.name || "(unnamed)"} — ${shortAddr(a.address)}`;
+            sel.appendChild(opt);
+          });
+          sel.style.display = "";
+          btn.style.display = "none";
+
+          // Connect chains in background while we set up account
+          connectChains().then(() => onAccountChange());
+          onAccountChange();
+        } catch (e) {
+          log(`Wallet connect failed: ${e.message}`, "err");
+          btn.disabled = false;
+          btn.textContent = "Connect Substrate Wallet";
+        }
+      }
+
+      async function onAccountChange() {
+        const sel = document.getElementById("accountSelect");
+        const idx = parseInt(sel.value, 10) || 0;
+        selectedAccount = accounts[idx];
+        if (!selectedAccount) return;
+        log(`Selected: ${selectedAccount.meta.name || ""} ${selectedAccount.address}`);
+        try {
+          injector = await PED().web3FromSource(selectedAccount.meta.source);
+        } catch (e) {
+          log(`Failed to load injector: ${e.message}`, "err");
+        }
+
+        const pubkey = PUC().decodeAddress(selectedAccount.address);
+        const ajunaAddr = PUC().encodeAddress(pubkey, ajunaSS58);
+        const ahAddr    = PUC().encodeAddress(pubkey, ahSS58);
+
+        document.getElementById("addrAjuna").textContent = shortAddr(ajunaAddr);
+        document.getElementById("addrAjuna").title = ajunaAddr;
+        document.getElementById("addrAH").textContent = shortAddr(ahAddr);
+        document.getElementById("addrAH").title = ahAddr;
+
+        document.getElementById("balancesWrap").style.display = "";
+        document.getElementById("flowsWrap").style.display = "";
+
+        await refreshBalances();
+      }
+
+      function shortAddr(a) {
+        if (!a) return "—";
+        return a.slice(0, 6) + "…" + a.slice(-6);
+      }
+
+      // ─── Balance reads ────────────────────────────────────────
+      function getPubkeyHex() {
+        return PU().u8aToHex(PUC().decodeAddress(selectedAccount.address));
+      }
+
+      async function refreshBalances() {
+        if (!selectedAccount) return;
+        const pubkey = PUC().decodeAddress(selectedAccount.address);
+        const ajunaAddr = PUC().encodeAddress(pubkey, ajunaSS58);
+        const ahAddr    = PUC().encodeAddress(pubkey, ahSS58);
+
+        // Ajuna AJUN (system account, native)
+        if (apiAjuna) {
+          try {
+            balances.ajunaAjun = await readNative(apiAjuna, ajunaAddr);
+            renderBal("balAjunaAjun", balances.ajunaAjun, CONFIG.AJUN_DECIMALS);
+          } catch (e) {
+            document.getElementById("balAjunaAjun").textContent = "err";
+            log(`Ajuna AJUN balance read failed: ${e.message}`, "err");
+          }
+
+          try {
+            balances.ajunaDot = await readAjunaDot(ajunaAddr);
+            renderBal("balAjunaDot", balances.ajunaDot, CONFIG.DOT_DECIMALS);
+          } catch (e) {
+            document.getElementById("balAjunaDot").textContent = "err";
+            log(`Ajuna DOT balance read failed: ${e.message}`, "err");
+          }
+        }
+
+        if (apiAH) {
+          try {
+            balances.ahDot = await readNative(apiAH, ahAddr);
+            renderBal("balAhDot", balances.ahDot, CONFIG.DOT_DECIMALS);
+          } catch (e) {
+            document.getElementById("balAhDot").textContent = "err";
+            log(`AH DOT balance read failed: ${e.message}`, "err");
+          }
+
+          try {
+            const ajunLoc = { parents: 1, interior: { X1: [{ Parachain: CONFIG.AJUNA_PARA_ID }] } };
+            balances.ahAjun = await readForeignAsset(apiAH, ajunLoc, ahAddr);
+            renderBal("balAhAjun", balances.ahAjun, CONFIG.AJUN_DECIMALS);
+          } catch (e) {
+            document.getElementById("balAhAjun").textContent = "—";
+            log(`AH AJUN balance read failed: ${e.message}`, "warn");
+          }
+        }
+      }
+
+      // Native balance via system.account → { free, total }.
+      // free = max(0, balance.free - balance.frozen). Note: substrate's modern
+      // AccountData unifies the old miscFrozen/feeFrozen into a single `frozen`.
+      async function readNative(api, addr) {
+        const acct = await api.query.system.account(addr);
+        const data = acct.data;
+        const free     = BigInt(data.free.toString());
+        const reserved = BigInt(data.reserved.toString());
+        const frozen   = data.frozen
+          ? BigInt(data.frozen.toString())
+          : BigInt((data.miscFrozen ?? data.feeFrozen ?? { toString: () => "0" }).toString());
+        const transferable = free > frozen ? free - frozen : 0n;
+        return { free: transferable, total: free + reserved };
+      }
+
+      // foreignAssets account → { free, total }. assets-pallet AssetAccount has
+      // no reserved/frozen split; `status: Frozen` means non-transferable.
+      async function readForeignAsset(api, loc, addr) {
+        const acct = await api.query.foreignAssets.account(loc, addr);
+        if (!acct.isSome) return { free: 0n, total: 0n };
+        const inner = acct.unwrap();
+        const bal = BigInt(inner.balance.toString());
+        const isFrozen = inner.status && inner.status.isFrozen;
+        return { free: isFrozen ? 0n : bal, total: bal };
+      }
+
+      function renderBal(elId, b, decimals) {
+        const el = document.getElementById(elId);
+        if (b == null) { el.textContent = "—"; return; }
+        const free  = fmt(b.free, decimals);
+        const total = fmt(b.total, decimals);
+        if (b.free === b.total) {
+          el.innerHTML = `<span class="free">${free}</span>`;
+        } else {
+          el.innerHTML = `<span class="free">${free}</span><span class="total">/ ${total}</span>`;
+        }
+        el.title = `transferable: ${free} · total: ${total}`;
+      }
+
+      // Try a couple of likely DOT registrations on Ajuna and return { free, total }.
+      async function readAjunaDot(addr) {
+        const dotLoc = { parents: 1, interior: "Here" };
+        if (apiAjuna.query.foreignAssets && apiAjuna.query.foreignAssets.account) {
+          try {
+            return await readForeignAsset(apiAjuna, dotLoc, addr);
+          } catch (_) { /* fall through */ }
+        }
+        if (apiAjuna.query.assets && apiAjuna.query.assets.account) {
+          for (const id of [0, 1, 1984]) {
+            try {
+              const acct = await apiAjuna.query.assets.account(id, addr);
+              if (acct.isSome) {
+                const inner = acct.unwrap();
+                const bal = BigInt(inner.balance.toString());
+                const isFrozen = inner.status && inner.status.isFrozen;
+                return { free: isFrozen ? 0n : bal, total: bal };
+              }
+            } catch (_) {}
+          }
+        }
+        return null;
+      }
+
+      // ─── Formatting helpers ───────────────────────────────────
+      function fmt(units, decimals) {
+        if (units == null) return "—";
+        const u = BigInt(units);
+        const base = 10n ** BigInt(decimals);
+        const whole = u / base;
+        const frac = u % base;
+        const fracStr = frac.toString().padStart(decimals, "0").slice(0, 6).replace(/0+$/, "");
+        return fracStr ? `${whole}.${fracStr}` : whole.toString();
+      }
+
+      function parseUnits(human, decimals) {
+        const s = String(human).trim();
+        if (!s) throw new Error("amount required");
+        if (!/^\d+(\.\d+)?$/.test(s)) throw new Error(`invalid amount: ${s}`);
+        const [w, f = ""] = s.split(".");
+        const padded = (f + "0".repeat(decimals)).slice(0, decimals);
+        return BigInt(w) * 10n ** BigInt(decimals) + BigInt(padded || "0");
+      }
+
+      function setMax(inputId, balKey) {
+        const v = balances[balKey];
+        if (v == null) return;
+        const decimals = balKey.endsWith("Dot") ? CONFIG.DOT_DECIMALS : CONFIG.AJUN_DECIMALS;
+        // Always use the transferable amount; user can't send their reserved/frozen funds.
+        document.getElementById(inputId).value = fmt(v.free, decimals);
+      }
+
+      // ─── XCM call builders ────────────────────────────────────
+      const HERE_LOCAL  = { parents: 0, interior: "Here" };
+      const HERE_PARENT = { parents: 1, interior: "Here" };
+      const PARA_LOC = (id) => ({ parents: 1, interior: { X1: [{ Parachain: id }] } });
+
+      function asset(id, amount) {
+        return { id, fun: { Fungible: amount.toString() } };
+      }
+
+      function depositXcm(pubkeyHex, count) {
+        return {
+          DepositAsset: {
+            assets: { Wild: { AllCounted: count } },
+            beneficiary: { parents: 0, interior: { X1: [{ AccountId32: { network: null, id: pubkeyHex } }] } }
+          }
+        };
+      }
+
+      function recipientPubkey(addrInput) {
+        const addr = (addrInput || "").trim() || selectedAccount.address;
+        const u8 = PUC().decodeAddress(addr);
+        return PU().u8aToHex(u8);
+      }
+
+      // AJUN is registered on AH as `isSufficient: false`, so it cannot bootstrap
+      // a fresh AH account by itself — it would trap. The recipient must already
+      // have either a live system.account (DOT >= ED) or a pre-touched
+      // foreignAssets entry for AJUN. See docs/PRODUCTION-CHECKLIST.md §
+      // "Prerequisites for the user".
+      async function ahRecipientCanReceiveAjun(pubkeyHex) {
+        const ahAddr = PUC().encodeAddress(PU().hexToU8a(pubkeyHex), ahSS58);
+        const ed = BigInt(apiAH.consts.balances.existentialDeposit.toString());
+        const sysAcct = await apiAH.query.system.account(ahAddr);
+        const free = BigInt(sysAcct.data.free.toString());
+        if (free >= ed) return { ok: true };
+        const ajunLoc = { parents: 1, interior: { X1: [{ Parachain: CONFIG.AJUNA_PARA_ID }] } };
+        const fa = await apiAH.query.foreignAssets.account(ajunLoc, ahAddr);
+        if (fa.isSome) return { ok: true };
+        return {
+          ok: false,
+          ahAddr,
+          edDot: fmt(ed, CONFIG.DOT_DECIMALS),
+        };
+      }
+
+      // ─── Submit helper ────────────────────────────────────────
+      async function submit(api, signerAddress, tx, label) {
+        log(`[${label}] encoded call: ${tx.method.toHex()}`, "dim");
+        return new Promise((resolve, reject) => {
+          tx.signAndSend(signerAddress, { signer: injector.signer }, (result) => {
+            const { status, dispatchError, txHash } = result;
+            if (status.isReady) log(`[${label}] tx ${txHash.toHex()} ready`);
+            else if (status.isBroadcast) log(`[${label}] broadcast`);
+            else if (status.isInBlock) log(`[${label}] in block ${status.asInBlock.toHex()}`, "ok");
+            else if (status.isFinalized) {
+              log(`[${label}] finalized in ${status.asFinalized.toHex()}`, "ok");
+              if (dispatchError) {
+                let msg = dispatchError.toString();
+                if (dispatchError.isModule) {
+                  const m = api.registry.findMetaError(dispatchError.asModule);
+                  msg = `${m.section}.${m.name}: ${m.docs.join(" ")}`;
+                }
+                log(`[${label}] FAILED: ${msg}`, "err");
+                reject(new Error(msg));
+              } else {
+                resolve(result);
+              }
+              setTimeout(refreshBalances, 1500);
+            }
+          }).catch(reject);
+        });
+      }
+
+      // ─── Flow handlers ────────────────────────────────────────
+      async function sendAjunOut() {
+        try {
+          if (!apiAjuna) throw new Error("Ajuna not connected");
+          if (!apiAH)    throw new Error("Asset Hub not connected (needed to verify recipient)");
+          const ajunAmt = parseUnits(document.getElementById("ajunOutAmt").value, CONFIG.AJUN_DECIMALS);
+          const dotFee  = parseUnits(document.getElementById("ajunOutDotFee").value, CONFIG.DOT_DECIMALS);
+          const recip   = recipientPubkey(document.getElementById("ajunOutTo").value);
+
+          const check = await ahRecipientCanReceiveAjun(recip);
+          if (!check.ok) {
+            log(
+              `Recipient ${shortAddr(check.ahAddr)} has no live AH account ` +
+              `(DOT < ED of ${check.edDot} and no AJUN entry). AJUN is isSufficient:false ` +
+              `— this transfer would TRAP the funds. Either send the recipient ≥ ${check.edDot} DOT ` +
+              `on AH first, or have them call foreignAssets.touch for AJUN.`,
+              "err"
+            );
+            return;
+          }
+
+          const tx = apiAjuna.tx.polkadotXcm.transferAssetsUsingTypeAndThen(
+            { V4: PARA_LOC(CONFIG.AH_PARA_ID) },
+            { V4: [ asset(HERE_LOCAL, ajunAmt), asset(HERE_PARENT, dotFee) ] },
+            { Teleport: null },
+            { V4: HERE_PARENT },
+            { DestinationReserve: null },
+            { V4: [ depositXcm(recip, 2) ] },
+            "Unlimited",
+          );
+          await submit(apiAjuna, selectedAccount.address, tx, "AJUN→AH");
+        } catch (e) {
+          log(`AJUN→AH failed: ${e.message}`, "err");
+        }
+      }
+
+      async function sendAjunIn() {
+        try {
+          if (!apiAH) throw new Error("AH not connected");
+          const ajunAmt = parseUnits(document.getElementById("ajunInAmt").value, CONFIG.AJUN_DECIMALS);
+          const recip   = recipientPubkey(document.getElementById("ajunInTo").value);
+          // `remoteFeesId` must EXACTLY match one entry in `assets` in the
+          // SOURCE chain's POV (the executor does `assets.find(a => a.id == fees_id)`).
+          // From AH's POV, AJUN is {parents:1, X1[Parachain(2051)]}, NOT {parents:0, Here}.
+          // The dest-side POV reanchoring happens automatically inside the executor.
+          const ajunIdFromAH = PARA_LOC(CONFIG.AJUNA_PARA_ID);
+          const tx = apiAH.tx.polkadotXcm.transferAssetsUsingTypeAndThen(
+            { V4: PARA_LOC(CONFIG.AJUNA_PARA_ID) },
+            { V4: [ asset(ajunIdFromAH, ajunAmt) ] },
+            { Teleport: null },
+            { V4: ajunIdFromAH },
+            { Teleport: null },
+            { V4: [ depositXcm(recip, 1) ] },
+            "Unlimited",
+          );
+          await submit(apiAH, selectedAccount.address, tx, "AJUN←AH");
+        } catch (e) {
+          log(`AJUN←AH failed: ${e.message}`, "err");
+        }
+      }
+
+      async function sendDotOut() {
+        try {
+          if (!apiAH) throw new Error("AH not connected");
+          const dotAmt = parseUnits(document.getElementById("dotOutAmt").value, CONFIG.DOT_DECIMALS);
+          const recip  = recipientPubkey(document.getElementById("dotOutTo").value);
+          // AH is DOT's reserve → LocalReserve from AH's POV.
+          // DOT id from Ajuna's POV is also {parents:1, Here}.
+          const tx = apiAH.tx.polkadotXcm.transferAssetsUsingTypeAndThen(
+            { V4: PARA_LOC(CONFIG.AJUNA_PARA_ID) },
+            { V4: [ asset(HERE_PARENT, dotAmt) ] },
+            { LocalReserve: null },
+            { V4: HERE_PARENT },
+            { LocalReserve: null },
+            { V4: [ depositXcm(recip, 1) ] },
+            "Unlimited",
+          );
+          await submit(apiAH, selectedAccount.address, tx, "DOT→Ajuna");
+        } catch (e) {
+          log(`DOT→Ajuna failed: ${e.message}`, "err");
+        }
+      }
+
+      async function sendDotIn() {
+        try {
+          if (!apiAjuna) throw new Error("Ajuna not connected");
+          const dotAmt = parseUnits(document.getElementById("dotInAmt").value, CONFIG.DOT_DECIMALS);
+          const recip  = recipientPubkey(document.getElementById("dotInTo").value);
+          // From Ajuna, AH is DOT's reserve → DestinationReserve.
+          // Same as how the proven AJUN→AH call handles its DOT-fee leg.
+          const tx = apiAjuna.tx.polkadotXcm.transferAssetsUsingTypeAndThen(
+            { V4: PARA_LOC(CONFIG.AH_PARA_ID) },
+            { V4: [ asset(HERE_PARENT, dotAmt) ] },
+            { DestinationReserve: null },
+            { V4: HERE_PARENT },
+            { DestinationReserve: null },
+            { V4: [ depositXcm(recip, 1) ] },
+            "Unlimited",
+          );
+          await submit(apiAjuna, selectedAccount.address, tx, "DOT←Ajuna");
+        } catch (e) {
+          log(`DOT←Ajuna failed: ${e.message}`, "err");
+        }
+      }
+
+      // Module scope is not global — expose inline-handler targets on window.
+      Object.assign(window, {
+        connectWallet, onAccountChange, setMax,
+        sendAjunOut, sendAjunIn, sendDotOut, sendDotIn,
+      });
+    </script>
+  </body>
+</html>
